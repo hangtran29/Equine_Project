@@ -7,7 +7,7 @@ from apps.core.serializers import DBColumnModelSerializer
 
 from .models import (
     HealthReport, HealthReportNote, MedicalRecord, MedicalRecordAmendment, MedicalSchedule, TrainingLock, Treatment,
-    Vaccination,
+    Vaccination, VetDutyShift,
 )
 
 # Có Flow 2 thì báo cáo sức khỏe gắn được với buổi tập (TrainingSessionID)
@@ -202,3 +202,29 @@ class ResolveReportSerializer(serializers.Serializer):
 
 class ReleaseLockSerializer(serializers.Serializer):
     Note = serializers.CharField(max_length=1000, required=False, allow_blank=True, allow_null=True)
+
+
+class VetDutyShiftSerializer(DBColumnModelSerializer):
+    """Ca trực của bác sĩ thú y (Flow 1)."""
+
+    VetName = serializers.CharField(source="vet.full_name", read_only=True)
+    CreatedByName = serializers.CharField(source="created_by.full_name", read_only=True)
+    IsOnDutyNow = serializers.SerializerMethodField()
+
+    class Meta:
+        model = VetDutyShift
+        fields = ["id", "vet", "VetName", "duty_date", "shift", "note", "created_by", "CreatedByName", "created_at",
+                  "IsOnDutyNow"]
+        read_only_fields = ["id", "VetName", "created_by", "CreatedByName", "created_at", "IsOnDutyNow"]
+
+    def get_IsOnDutyNow(self, obj):
+        from .duty import _local_now, shift_covers
+
+        return shift_covers(obj.shift, obj.duty_date, _local_now())
+
+
+class VetDutyShiftWriteSerializer(serializers.Serializer):
+    VetID = serializers.IntegerField()
+    DutyDate = serializers.DateField()
+    Shift = serializers.ChoiceField(choices=VetDutyShift.Shift.choices)
+    Note = serializers.CharField(max_length=500, required=False, allow_blank=True)

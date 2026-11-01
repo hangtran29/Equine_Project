@@ -1,6 +1,6 @@
 """
 Y tế (horse_v2.sql, không có migrations):
-  Flow 1 - phiếu khám đầu vào: MedicalRecord, MedicalRecordAmendment.
+  Flow 1 - phiếu khám đầu vào: MedicalRecord, MedicalRecordAmendment; lịch trực bác sĩ: VetDutyShift.
   Flow 3 - y tế: TrainingLock, Treatment, Vaccination, MedicalSchedule, HealthReport, HealthReportNote.
 """
 from django.conf import settings
@@ -103,6 +103,36 @@ class MedicalRecordAmendment(models.Model):
         managed = False
         db_table = "MedicalRecordAmendment"
         ordering = ["amended_at", "id"]
+
+
+class VetDutyShift(models.Model):
+    """
+    Lịch trực của bác sĩ thú y (Club Manager xếp). Bác sĩ đang trực được báo trước khi có ngựa chờ khám đầu vào
+    và khi có báo cáo sức khỏe khẩn; bác sĩ khác vẫn nhận ca được.
+    Ca: Morning 06:00-14:00, Afternoon 14:00-22:00, Night 22:00-06:00 hôm sau, Full Day cả ngày.
+    """
+
+    class Shift(models.TextChoices):
+        MORNING = "Morning"
+        AFTERNOON = "Afternoon"
+        NIGHT = "Night"
+        FULL_DAY = "Full Day"
+
+    id = models.AutoField(primary_key=True, db_column="VetDutyShiftID")
+    club = models.ForeignKey("accounts.Club", on_delete=models.DO_NOTHING, db_column="ClubID", related_name="+")
+    vet = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.DO_NOTHING, db_column="VetID",
+                            related_name="+")
+    duty_date = models.DateField(db_column="DutyDate")
+    shift = models.CharField(max_length=20, choices=Shift.choices, db_column="Shift")
+    note = models.CharField(max_length=500, null=True, blank=True, db_column="Note")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.DO_NOTHING, db_column="CreatedBy",
+                                   related_name="+")
+    created_at = models.DateTimeField(default=timezone.now, db_column="CreatedAt")
+
+    class Meta:
+        managed = False
+        db_table = "VetDutyShift"
+        ordering = ["duty_date", "shift", "id"]
 
 
 class TrainingLock(models.Model):

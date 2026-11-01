@@ -87,6 +87,7 @@ DROP TABLE IF EXISTS dbo.HealthReport;
 DROP TABLE IF EXISTS dbo.MedicalSchedule;
 DROP TABLE IF EXISTS dbo.Vaccination;
 DROP TABLE IF EXISTS dbo.Treatment;
+DROP TABLE IF EXISTS dbo.VetDutyShift;
 DROP TABLE IF EXISTS dbo.MedicalRecordAmendment;
 DROP TABLE IF EXISTS dbo.MedicalRecord;
 DROP TABLE IF EXISTS dbo.TrainingLock;
@@ -1060,6 +1061,32 @@ CREATE TABLE dbo.MedicalRecordAmendment
         REFERENCES dbo.MedicalRecord(MedicalRecordID),
     CONSTRAINT FK_MedicalRecordAmendment_AmendedBy FOREIGN KEY (AmendedBy)
         REFERENCES dbo.[User](UserID)
+);
+GO
+
+/* Lịch trực bác sĩ thú y (Club Manager xếp). Ca: Morning 06-14h, Afternoon 14-22h, Night 22h-06h hôm sau, Full Day. */
+CREATE TABLE dbo.VetDutyShift
+(
+    VetDutyShiftID INT IDENTITY(1,1) PRIMARY KEY,
+    ClubID INT NOT NULL,
+    VetID INT NOT NULL,
+    DutyDate DATE NOT NULL,
+    Shift VARCHAR(20) NOT NULL,
+    Note NVARCHAR(500),
+    CreatedBy INT NOT NULL,
+    CreatedAt DATETIME2 NOT NULL CONSTRAINT DF_VetDutyShift_CreatedAt DEFAULT SYSDATETIME(),
+
+    CONSTRAINT FK_VetDutyShift_Club FOREIGN KEY (ClubID)
+        REFERENCES dbo.Club(ClubID),
+    CONSTRAINT FK_VetDutyShift_Vet FOREIGN KEY (VetID)
+        REFERENCES dbo.[User](UserID),
+    CONSTRAINT FK_VetDutyShift_CreatedBy FOREIGN KEY (CreatedBy)
+        REFERENCES dbo.[User](UserID),
+    CONSTRAINT UQ_VetDutyShift UNIQUE (ClubID, DutyDate, Shift, VetID),
+    CONSTRAINT CK_VetDutyShift_Shift CHECK
+    (
+        Shift IN ('Morning', 'Afternoon', 'Night', 'Full Day')
+    )
 );
 GO
 

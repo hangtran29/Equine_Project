@@ -175,7 +175,7 @@ class HorseViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Ge
         data.is_valid(raise_exception=True)
         v = data.validated_data
         horse = services.approve(self.get_object(), request.user, v["HorseCode"], v.get("StallID"),
-                                 v.get("ManagerNote"))
+                                 v.get("ManagerNote"), v.get("GroomID"))
         return self._detail(horse)
 
     @action(detail=True, methods=["post"])

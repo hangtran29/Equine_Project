@@ -19,12 +19,14 @@ from apps.horses.models import Horse, RegistrationRequest
 from apps.horses.views import get_visible_horse
 
 from . import services
-from .models import HealthReport, MedicalRecord, MedicalSchedule, TrainingLock, Treatment, Vaccination
+from . import duty
+from .models import HealthReport, MedicalRecord, MedicalSchedule, TrainingLock, Treatment, Vaccination, VetDutyShift
 from .serializers import (
     ContentSerializer, HealthReportCreateSerializer, HealthReportNoteSerializer, HealthReportSerializer,
     MedicalRecordAmendmentSerializer, MedicalRecordSerializer, MedicalRecordWriteSerializer, MedicalScheduleSerializer,
     ReleaseLockSerializer, ResolveReportSerializer, SignSerializer, TrainingLockSerializer,
-    TrainingLockWriteSerializer, TreatmentSerializer, VaccinationSerializer,
+    TrainingLockWriteSerializer, TreatmentSerializer, VaccinationSerializer, VetDutyShiftSerializer,
+    VetDutyShiftWriteSerializer,
 )
 
 STAFF_VIEW = "HORSE_VIEW"
@@ -44,6 +46,66 @@ def get_visible_record(user, record_id):
     if record is None:
         raise NotFound("Không tìm thấy phiếu khám.")
     return record
+
+
+# ---------------------------------------------------------------------------
+# Lịch trực bác sĩ thú y (Club Manager xếp)
+# ---------------------------------------------------------------------------
+DUTY_VIEWERS = ("CLUB_MANAGE", VET)
+
+
+class VetDutyShiftListView(APIView):
+    """
+    GET  /api/vet-duty-shifts?From=&To=&VetID=   Manager, Vet xem lịch trực (mặc định 7 ngày từ hôm nay)
+    POST /api/vet-duty-shifts                     Manager xếp ca {"VetID", "DutyDate", "Shift", "Note"?}
+    """
+
+    def get_permissions(self):
+        if self.request.method == "POST":
+            return [HasAnyPermission("CLUB_MANAGE")()]
+        return [HasAnyPermission(*DUTY_VIEWERS)()]
+
+    def get(self, request):
+        p = request.query_params
+        start = date_param(p, "From") if p.get("From") else date.today()
+        end = date_param(p, "To") if p.get("To") else start + timedelta(days=6)
+        if end < start:
+            raise ValidationError({"To": ["Ngày kết thúc phải sau ngày bắt đầu."]})
+        qs = VetDutyShift.objects.filter(club_id=request.user.club_id, duty_date__gte=start,
+                                         duty_date__lte=end).select_related("vet", "created_by")
+        if p.get("VetID"):
+            qs = qs.filter(vet_id=int_param(p, "VetID"))
+        return Response(VetDutyShiftSerializer(qs, many=True).data)
+
+    def post(self, request):
+        data = VetDutyShiftWriteSerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+        v = data.validated_data
+        item = duty.create_shift(request.user, v["VetID"], v["DutyDate"], v["Shift"], v.get("Note"))
+        return Response(VetDutyShiftSerializer(item).data, status=status.HTTP_201_CREATED)
+
+
+class VetDutyShiftDetailView(APIView):
+    """DELETE /api/vet-duty-shifts/<id> - Manager bỏ ca trực (ca chưa qua)."""
+
+    permission_classes = [HasAnyPermission("CLUB_MANAGE")]
+
+    def delete(self, request, shift_id):
+        item = VetDutyShift.objects.filter(pk=shift_id, club_id=request.user.club_id).first()
+        if item is None:
+            raise NotFound("Không tìm thấy ca trực.")
+        duty.delete_shift(item, request.user)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class VetOnDutyView(APIView):
+    """GET /api/vet-duty-shifts/now - bác sĩ đang trực lúc này ([] nếu không ai trực)."""
+
+    permission_classes = [HasAnyPermission(STAFF_VIEW)]
+
+    def get(self, request):
+        shifts = duty.shifts_now(request.user.club_id)
+        return Response(VetDutyShiftSerializer(shifts, many=True).data)
 
 
 class PendingInitialExamView(APIView):

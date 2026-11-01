@@ -55,6 +55,16 @@ def build_notifications(user):
                 done=Exists(signed)).filter(done=True):
             items.append(_item("HORSE_TO_APPROVE", "Vet đã khám đầu vào, chờ duyệt tiếp nhận", "Horse", horse.id,
                                horse, horse.updated_at))
+    if "CLUB_MANAGE" in perms:  # chưa xếp bác sĩ trực hôm nay / ngày mai
+        from apps.core.permissions import club_users_with_role
+        from apps.medical.models import VetDutyShift
+
+        if club_users_with_role(club, "VETERINARIAN").exists():
+            missing = [(day, label) for day, label in ((today, "hôm nay"), (today + timedelta(days=1), "ngày mai"))
+                       if not VetDutyShift.objects.filter(club_id=club, duty_date=day).exists()]
+            if missing:
+                items.append(_item("VET_DUTY_MISSING", "Chưa xếp bác sĩ trực " + " và ".join(m[1] for m in missing),
+                                   "Club", club, None, missing[0][0], urgent=missing[0][0] == today))
     if "PROFILE_EDIT_APPROVE" in perms:
         for req in ProfileChangeRequest.objects.filter(horse__club_id=club, status="Pending").select_related("horse"):
             items.append(_item("PROFILE_CHANGE", "Yêu cầu sửa lý lịch chờ duyệt", "ProfileChangeRequest", req.id,
@@ -63,8 +73,12 @@ def build_notifications(user):
     if "MEDICAL_MANAGE" in perms:
         pending = Horse.objects.filter(club_id=club, registration_status="PendingExam").annotate(
             done=Exists(signed_initial_exams().filter(horse=OuterRef("pk")))).filter(done=False)
+        from apps.medical.duty import is_on_duty
+
+        on_duty = is_on_duty(user)
         for horse in pending:
-            items.append(_item("INITIAL_EXAM", "Ngựa chờ khám đầu vào", "Horse", horse.id, horse, horse.verified_at))
+            items.append(_item("INITIAL_EXAM", "Ngựa chờ khám đầu vào" + (" (bạn đang trực)" if on_duty else ""),
+                               "Horse", horse.id, horse, horse.verified_at, urgent=on_duty))
         for record in MedicalRecord.objects.filter(horse__club_id=club, vet=user, record_status="Draft"):
             items.append(_item("DRAFT_RECORD", "Phiếu khám nháp chưa chốt", "MedicalRecord", record.id,
                                record.horse, record.exam_date))

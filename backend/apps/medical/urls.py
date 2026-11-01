@@ -3,6 +3,10 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
+    # Lịch trực bác sĩ thú y
+    path("vet-duty-shifts", views.VetDutyShiftListView.as_view()),
+    path("vet-duty-shifts/now", views.VetOnDutyView.as_view()),
+    path("vet-duty-shifts/<int:shift_id>", views.VetDutyShiftDetailView.as_view()),
     # Phiếu khám
     path("vet/pending-initial-exams", views.PendingInitialExamView.as_view()),
     path("horses/<int:horse_id>/medical-records", views.HorseMedicalRecordListView.as_view()),

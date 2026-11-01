@@ -340,6 +340,7 @@ class ReasonSerializer(serializers.Serializer):
 class ApproveSerializer(serializers.Serializer):
     HorseCode = serializers.CharField(max_length=30)
     StallID = serializers.IntegerField(required=False, allow_null=True)
+    GroomID = serializers.IntegerField(required=False, allow_null=True)   # Groom phụ trách ngựa (Flow 4)
     ManagerNote = serializers.CharField(max_length=1000, required=False, allow_blank=True)
 
 

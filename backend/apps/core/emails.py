@@ -134,6 +134,16 @@ def registration_verified(horse):
     ))
 
 
+def initial_exam_needed(horse):
+    """Hồ sơ vừa xác minh: báo bác sĩ đang trực (không ai trực thì mọi bác sĩ của CLB) để khám đầu vào."""
+    from apps.medical.duty import vets_to_alert
+
+    send_email([vet.email for vet in vets_to_alert(horse.club_id)], f"Ngựa chờ khám đầu vào: {horse.horse_name}", (
+        f"Hồ sơ {_horse_label(horse)} đã được quản lý xác minh giấy tờ.\n"
+        "Vui lòng vào hàng chờ khám đầu vào để nhận ca và khám sức khỏe cho ngựa."
+    ))
+
+
 def initial_exam_signed(record):
     horse = record.horse
     send_email(_managers_of(horse.club_id), f"Đã khám đầu vào: {horse.horse_name}", (

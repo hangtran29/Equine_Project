@@ -8,10 +8,12 @@ Draft ──submit──> Submitted ──verify──> PendingExam ──(Vet c
 import json
 
 from django.utils import timezone
+from rest_framework.exceptions import ValidationError
 
 from apps.core import emails, flows
 from apps.core.audit import log_action
 from apps.core.exceptions import BusinessRuleError
+from apps.core.permissions import require_club_user
 from apps.medical.services import signed_initial_exam_for
 
 from .models import Horse, ProfileChangeRequest, RegistrationRequest, Stall, StallAssignment
@@ -75,6 +77,7 @@ def verify(horse, user):
     request.save(update_fields=["status"])
     log_action(user, "VERIFY_REGISTRATION", horse, {"RegistrationRequestID": request.id})
     emails.registration_verified(horse)
+    emails.initial_exam_needed(horse)
     return horse
 
 
@@ -95,8 +98,11 @@ def reject(horse, user, reason):
     return horse
 
 
-def approve(horse, user, horse_code, stall_id=None, manager_note=None):
-    """Hoàn tất tiếp nhận: cần phiếu khám đầu vào đã chốt và đạt; gán mã ngựa, xếp chuồng (nếu có)."""
+def approve(horse, user, horse_code, stall_id=None, manager_note=None, groom_id=None):
+    """
+    Hoàn tất tiếp nhận: cần phiếu khám đầu vào đã chốt và đạt; gán mã ngựa, xếp chuồng (nếu có)
+    và xếp Groom phụ trách (nếu có, cần Flow 4).
+    """
     _require_status(horse, (S.PENDING_EXAM,), "duyệt hồ sơ")
     exam = signed_initial_exam_for(horse)
     if exam is None:
@@ -110,6 +116,12 @@ def approve(horse, user, horse_code, stall_id=None, manager_note=None):
     horse_code = horse_code.strip()
     if Horse.objects.filter(club_id=horse.club_id, horse_code__iexact=horse_code).exclude(pk=horse.pk).exists():
         raise BusinessRuleError("Mã ngựa đã tồn tại trong câu lạc bộ.", "DUPLICATE_HORSE_CODE")
+
+    groom = None
+    if groom_id:
+        if not flows.has_care():
+            raise ValidationError({"GroomID": ["Chưa có Flow 4 (chăm sóc) nên chưa xếp Groom được."]})
+        groom = require_club_user(groom_id, horse.club_id, "GROOM", field="GroomID")
 
     now = timezone.now()
     stall = None
@@ -139,7 +151,13 @@ def approve(horse, user, horse_code, stall_id=None, manager_note=None):
         stall.status = Stall.Status.OCCUPIED
         stall.save(update_fields=["status"])
 
-    log_action(user, "APPROVE_REGISTRATION", horse, {"HorseCode": horse_code, "StallID": stall_id})
+    if groom is not None:
+        from apps.care.automation import set_horse_groom
+
+        set_horse_groom(horse, groom, user)
+
+    log_action(user, "APPROVE_REGISTRATION", horse, {"HorseCode": horse_code, "StallID": stall_id,
+                                                     "GroomID": groom.pk if groom else None})
     emails.registration_approved(horse)
     return horse
 
