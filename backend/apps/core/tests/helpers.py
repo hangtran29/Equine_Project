@@ -84,14 +84,18 @@ class Flow1TestCase(APITestCase):
         self.assertEqual(res.status_code, 200, res.data)
         return record_id
 
-    def approved_horse(self):
-        horse_id = self.owner_creates_horse()
+    def approved_horse(self, code="EQ-001", **extra):
+        horse_id = self.owner_creates_horse(**extra)
         self.submit_and_verify(horse_id)
         self.vet_signs_initial_exam(horse_id)
-        res = self.client_for(self.manager).post(f"/api/horses/{horse_id}/approve", {"HorseCode": "EQ-001"},
+        res = self.client_for(self.manager).post(f"/api/horses/{horse_id}/approve", {"HorseCode": code},
                                                  format="json")
         self.assertEqual(res.status_code, 200, res.data)
         return horse_id
+
+    def approved_horse_named(self, name, microchip):
+        """Ngựa thứ hai trong CLB (tên, microchip, mã ngựa khác)."""
+        return self.approved_horse(code=f"EQ-{microchip[-3:]}", HorseName=name, MicrochipNumber=microchip)
 
 
 def years_ago(years, month=1, day=1):

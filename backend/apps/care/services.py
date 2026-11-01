@@ -1,14 +1,16 @@
 """
 Luật nghiệp vụ Flow 4 - chăm sóc và dinh dưỡng.
 
-Khẩu phần:  Head Trainer lập (Pending) ──Vet approve──> Approved ──Vet adjust──> Adjusted
-                 ^                 │ Vet reject (kèm VetNote)
-                 └── sửa, gửi lại ─┘ Rejected
-            Khẩu phần mới được duyệt -> khẩu phần cũ trùng thời gian kết thúc hôm trước ngày khẩu phần mới (hoặc Expired).
+Khẩu phần:  Head Trainer lập (Pending) ──Vet góp ý (comment)──> Head Trainer chốt (finalize) ──> Approved
+            Ngựa đang bệnh / chấn thương / bị khóa tập: cần Vet duyệt (approve) hoặc trả về (reject, kèm VetNote);
+            Vet điều chỉnh khẩu phần đang áp dụng (adjust) của ngựa đó.
+            Khẩu phần mới có hiệu lực -> khẩu phần cũ trùng thời gian kết thúc hôm trước ngày khẩu phần mới (hoặc Expired).
 Khẩu phần gắn với giáo án đang chạy (TrainingPlanID): Head Trainer xem ngữ cảnh tập (diet_context) trước khi lập.
-Việc chăm sóc: hệ thống tự sinh theo chỉ tiêu (automation.py), Head Trainer / Manager giao thêm việc ngoài chỉ tiêu.
-               Groom KHÔNG tự tạo việc, chỉ hoàn thành / bỏ qua (kèm lý do). Pending -> Completed / Skipped.
-Vật tư:     Groom / Head Trainer gửi yêu cầu (Pending) -> Manager duyệt (trừ kho) / từ chối; người gửi hủy được.
+Việc chăm sóc: hệ thống tự sinh theo chỉ tiêu (automation.py) cho Groom phụ trách ngựa (Manager xếp).
+               Việc phát sinh: Vet giao việc y tế (mọi ngựa), Trainer giao việc tập luyện (ngựa mình phụ trách);
+               người giao không chọn Groom - việc về tay Groom phụ trách ngựa.
+               Groom hoàn thành (việc cho ăn ghi ăn hết / một phần / bỏ ăn) hoặc bỏ qua (kèm lý do).
+Vật tư:     Groom / Vet / Head Trainer gửi yêu cầu (Pending) -> Manager duyệt (trừ kho) / từ chối; người gửi hủy được.
 """
 from datetime import date, timedelta
 from decimal import Decimal
@@ -20,14 +22,14 @@ from apps.core import flows
 
 from apps.core.audit import log_action
 from apps.core.exceptions import BusinessRuleError
-from apps.core.permissions import require_club_user, user_has_any
 from apps.horses.models import Horse
 
+from . import access
 from .models import CareTask, DietMeal, DietPlan, InventoryItem, InventoryRequest, InventoryRequestItem
 
 D = DietPlan.Status
 IN_FORCE = (D.APPROVED, D.ADJUSTED)
-CARE_ASSIGNERS = ("TRAINER_ASSIGN", "CLUB_MANAGE")   # Head Trainer, Club Manager
+SICK_STATUSES = ("Injured", "Recovering", "Isolated")
 
 
 def _ensure_horse(horse):
@@ -180,13 +182,28 @@ def update_diet_plan(plan, user, values, meals=None):
     return plan
 
 
-def approve_diet_plan(plan, user, note=None):
+def needs_vet_approval(horse):
+    """Ngựa đang bệnh / chấn thương / cách ly hoặc đang bị khóa tập: khẩu phần phải được Vet duyệt."""
+    if horse.current_health_status in SICK_STATUSES:
+        return True
+    if flows.has_flow3():
+        from apps.medical.models import TrainingLock
+
+        return TrainingLock.objects.filter(horse=horse, lock_status="Active").exists()
+    return False
+
+
+def _ensure_diet_pending(plan):
     if plan.status != D.PENDING:
-        raise BusinessRuleError("Khẩu phần không ở trạng thái chờ duyệt.", "INVALID_STATUS")
-    if plan.created_by_id == user.pk:
-        raise BusinessRuleError("Người lập khẩu phần không tự duyệt.", "SELF_APPROVAL")
-    # Khẩu phần đang áp dụng bị trùng thời gian: bắt đầu trước -> kết thúc vào hôm trước ngày khẩu phần mới;
-    # bắt đầu cùng ngày hoặc sau -> Expired. Khẩu phần mới bắt đầu trong tương lai thì khẩu phần hiện tại vẫn dùng tới hôm đó.
+        raise BusinessRuleError("Khẩu phần không ở trạng thái chờ chốt / chờ duyệt.", "INVALID_STATUS")
+
+
+def _activate(plan, user, action, details=None):
+    """
+    Khẩu phần có hiệu lực. Khẩu phần đang áp dụng bị trùng thời gian: bắt đầu trước -> kết thúc vào hôm trước ngày
+    khẩu phần mới; bắt đầu cùng ngày hoặc sau -> Expired. Khẩu phần mới bắt đầu trong tương lai thì khẩu phần hiện
+    tại vẫn dùng tới hôm đó.
+    """
     expired, shortened = [], []
     for old in plan.horse.diet_plans.filter(status__in=IN_FORCE).exclude(pk=plan.pk):
         overlaps = (old.end_date is None or old.end_date >= plan.start_date) and \
@@ -202,17 +219,57 @@ def approve_diet_plan(plan, user, note=None):
             old.save(update_fields=["status"])
             expired.append(old.id)
     plan.status = D.APPROVED
-    plan.reviewed_by = user
     plan.approved_at = timezone.now()
-    plan.vet_note = note or plan.vet_note
     plan.save(update_fields=["status", "reviewed_by", "approved_at", "vet_note"])
-    log_action(user, "APPROVE_DIET_PLAN", plan, {"ExpiredDietPlanIDs": expired, "ShortenedDietPlanIDs": shortened})
+    log_action(user, action, plan, {"ExpiredDietPlanIDs": expired, "ShortenedDietPlanIDs": shortened,
+                                    **(details or {})})
     return plan
 
 
+def comment_diet_plan(plan, user, note):
+    """Vet góp ý khẩu phần (vai trò tư vấn dinh dưỡng). Khẩu phần vẫn chờ Head Trainer chốt."""
+    _ensure_diet_pending(plan)
+    if not (note or "").strip():
+        raise ValidationError({"VetNote": ["Cần ghi nội dung góp ý."]})
+    plan.reviewed_by = user
+    plan.vet_note = note.strip()
+    plan.save(update_fields=["reviewed_by", "vet_note"])
+    log_action(user, "COMMENT_DIET_PLAN", plan, {"VetNote": plan.vet_note})
+    return plan
+
+
+def finalize_diet_plan(plan, user):
+    """Head Trainer chốt khẩu phần sau khi Vet góp ý. Ngựa đang bệnh / bị khóa tập thì Vet phải duyệt."""
+    _ensure_diet_pending(plan)
+    if needs_vet_approval(plan.horse):
+        raise BusinessRuleError("Ngựa đang bệnh hoặc bị khóa tập: khẩu phần cần bác sĩ thú y duyệt.",
+                                "VET_APPROVAL_REQUIRED")
+    if plan.reviewed_by_id is None:
+        raise BusinessRuleError("Gửi bác sĩ thú y góp ý trước khi chốt khẩu phần.", "VET_COMMENT_REQUIRED")
+    return _activate(plan, user, "FINALIZE_DIET_PLAN")
+
+
+def _ensure_vet_case(plan):
+    if not needs_vet_approval(plan.horse):
+        raise BusinessRuleError("Ngựa không bệnh / không bị khóa tập: bác sĩ góp ý, huấn luyện viên trưởng chốt.",
+                                "VET_APPROVAL_NOT_NEEDED")
+
+
+def approve_diet_plan(plan, user, note=None):
+    """Vet duyệt khẩu phần của ngựa đang bệnh / bị khóa tập."""
+    _ensure_diet_pending(plan)
+    _ensure_vet_case(plan)
+    if plan.created_by_id == user.pk:
+        raise BusinessRuleError("Người lập khẩu phần không tự duyệt.", "SELF_APPROVAL")
+    plan.reviewed_by = user
+    plan.vet_note = note or plan.vet_note
+    return _activate(plan, user, "APPROVE_DIET_PLAN")
+
+
 def reject_diet_plan(plan, user, note):
-    if plan.status != D.PENDING:
-        raise BusinessRuleError("Khẩu phần không ở trạng thái chờ duyệt.", "INVALID_STATUS")
+    """Vet trả về khẩu phần của ngựa đang bệnh / bị khóa tập (Head Trainer sửa rồi gửi lại)."""
+    _ensure_diet_pending(plan)
+    _ensure_vet_case(plan)
     if not note:
         raise ValidationError({"VetNote": ["Cần ghi lý do trả về."]})
     plan.status = D.REJECTED
@@ -224,9 +281,10 @@ def reject_diet_plan(plan, user, note):
 
 
 def adjust_diet_plan(plan, user, note, values=None, meals=None):
-    """Vet điều chỉnh khẩu phần đang áp dụng (vd ngựa dị ứng, đang điều trị)."""
+    """Vet điều chỉnh khẩu phần đang áp dụng của ngựa đang bệnh / chấn thương / bị khóa tập."""
     if plan.status not in IN_FORCE:
         raise BusinessRuleError("Chỉ điều chỉnh khẩu phần đang áp dụng.", "INVALID_STATUS")
+    _ensure_vet_case(plan)
     if not note:
         raise ValidationError({"VetNote": ["Cần ghi lý do điều chỉnh."]})
     for attr, value in (values or {}).items():
@@ -245,37 +303,41 @@ def adjust_diet_plan(plan, user, note, values=None, meals=None):
 # ---------------------------------------------------------------------------
 # Việc chăm sóc
 # ---------------------------------------------------------------------------
-def is_care_assigner(user) -> bool:
-    return user_has_any(user, *CARE_ASSIGNERS)
-
-
-def create_care_task(horse, user, values, groom_id=None):
-    """Head Trainer / Manager giao việc ngoài chỉ tiêu. Groom không tự tạo việc (việc hằng ngày do hệ thống sinh)."""
-    if not is_care_assigner(user):
-        raise PermissionDenied("Groom không tự tạo việc: việc hằng ngày do hệ thống sinh theo chỉ tiêu, "
-                               "việc khác do Head Trainer / Manager giao.")
+def create_care_task(horse, user, values):
+    """
+    Việc phát sinh ngoài chỉ tiêu: Vet giao việc y tế (mọi ngựa), Trainer giao việc tập luyện (ngựa mình phụ trách).
+    Người giao không chọn Groom: việc về tay Groom phụ trách ngựa (chưa có thì Groom ít việc nhất ngày đó).
+    """
     _ensure_horse(horse)
-    groom = require_club_user(groom_id, horse.club_id, "GROOM", field="GroomID")
+    types = access.allowed_task_types(user, horse)
+    if not types:
+        raise PermissionDenied("Chỉ bác sĩ thú y (việc y tế) hoặc trainer phụ trách ngựa (việc tập luyện) giao thêm "
+                               "việc; việc hằng ngày do hệ thống tự tạo.")
+    if values.get("task_type") not in types:
+        raise ValidationError({"TaskType": [f"Bạn chỉ giao được: {', '.join(sorted(types))}."]})
+    from .automation import GroomPicker
+
+    groom = GroomPicker(horse.club, values["scheduled_at"].date()).pick(horse)
+    if groom is None:
+        raise BusinessRuleError("CLB chưa có Groom nào đang hoạt động để nhận việc.", "NO_GROOM")
     task = CareTask.objects.create(horse=horse, groom=groom, assigned_by=user, status=CareTask.Status.PENDING,
                                    **values)
-    log_action(user, "CREATE_CARE_TASK", task, {"HorseID": horse.pk, "GroomID": groom.pk})
+    log_action(user, "CREATE_CARE_TASK", task, {"HorseID": horse.pk, "GroomID": groom.pk,
+                                                "TaskType": task.task_type})
     return task
 
 
 def _ensure_task_manager(task, user):
-    allowed = task.assigned_by_id == user.pk or is_care_assigner(user)
-    if not allowed:
-        raise BusinessRuleError("Bạn không được sửa việc chăm sóc này.", "NOT_TASK_OWNER")
+    if task.assigned_by_id != user.pk:
+        raise BusinessRuleError("Chỉ người giao việc này mới sửa / bỏ được.", "NOT_TASK_OWNER")
 
 
-def update_care_task(task, user, values, groom_id=None):
+def update_care_task(task, user, values):
     if task.status != CareTask.Status.PENDING:
         raise BusinessRuleError("Chỉ sửa được việc chưa làm (Pending).", "INVALID_STATUS")
     _ensure_task_manager(task, user)
-    if groom_id is not None:
-        if not is_care_assigner(user):
-            raise BusinessRuleError("Chỉ Head Trainer / Manager được đổi Groom.", "NOT_TASK_OWNER")
-        task.groom = require_club_user(groom_id, task.horse.club_id, "GROOM", field="GroomID")
+    if "task_type" in values and values["task_type"] not in access.allowed_task_types(user, task.horse):
+        raise ValidationError({"TaskType": ["Bạn không giao được loại việc này."]})
     for attr, value in values.items():
         setattr(task, attr, value)
     task.save()
@@ -288,16 +350,20 @@ def _append_note(task, text):
         task.note = ((task.note or "") + ("\n" if task.note else "") + text)[:1000]
 
 
-def complete_care_task(task, user, note=None):
+def complete_care_task(task, user, note=None, intake=None):
+    """Groom xác nhận đã làm; việc cho ăn ghi ngựa ăn hết (Full) / một phần (Partial) / bỏ ăn (Refused)."""
     if task.groom_id != user.pk:
         raise BusinessRuleError("Chỉ Groom được giao mới xác nhận hoàn thành.", "NOT_TASK_GROOM")
     if task.status != CareTask.Status.PENDING:
         raise BusinessRuleError("Việc này đã xử lý.", "INVALID_STATUS")
+    if intake and task.task_type != CareTask.TaskType.FEEDING:
+        raise ValidationError({"IntakeStatus": ["Chỉ ghi mức ăn cho việc cho ăn (Feeding)."]})
     task.status = CareTask.Status.COMPLETED
     task.completed_at = timezone.now()
+    task.intake_status = intake or None
     _append_note(task, note)
-    task.save(update_fields=["status", "completed_at", "note"])
-    log_action(user, "COMPLETE_CARE_TASK", task)
+    task.save(update_fields=["status", "completed_at", "note", "intake_status"])
+    log_action(user, "COMPLETE_CARE_TASK", task, {"IntakeStatus": intake} if intake else None)
     return task
 
 

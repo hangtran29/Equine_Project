@@ -15,6 +15,8 @@ urlpatterns = [
     path("horses/<int:horse_id>/current-diet", views.CurrentDietView.as_view()),
     path("horses/<int:horse_id>/diet-context", views.DietContextView.as_view()),
     path("horses/<int:horse_id>/groom", views.HorseGroomView.as_view()),
+    path("horse-grooms", views.HorseGroomBoardView.as_view()),
+    path("grooms", views.GroomListView.as_view()),
     path("care-rules", views.CareRuleListView.as_view()),
     path("care-rules/<str:rule_code>", views.CareRuleDetailView.as_view()),
     *router.urls,

@@ -1,8 +1,9 @@
 """
 FLOW 4 - chăm sóc và dinh dưỡng (horse_v2.sql):
-  DietPlan, DietMeal (Head Trainer lập khẩu phần theo giáo án đang chạy, Vet duyệt),
-  CareTask (việc chăm sóc của Groom: hệ thống tự sinh theo chỉ tiêu CareTaskRule, hoặc Head Trainer / Manager giao),
-  CareTaskRule (chỉ tiêu sinh việc của từng CLB), HorseGroom (Groom phụ trách ngựa),
+  DietPlan, DietMeal (Head Trainer lập khẩu phần theo giáo án đang chạy, Vet góp ý, Head Trainer chốt;
+                     ngựa đang bệnh / bị khóa tập thì cần Vet duyệt),
+  CareTask (việc chăm sóc của Groom: hệ thống tự sinh theo chỉ tiêu CareTaskRule; việc phát sinh do Vet / Trainer giao),
+  CareTaskRule (chỉ tiêu sinh việc của từng CLB, Head Trainer chỉnh), HorseGroom (Groom phụ trách ngựa, Manager xếp),
   InventoryItem, InventoryRequest, InventoryRequestItem (kho vật tư của CLB).
 """
 from django.conf import settings
@@ -68,6 +69,13 @@ class CareTask(models.Model):
         CLEANING = "Cleaning"
         BATHING = "Bathing"
         ICE_LEG_SOAK = "Ice Leg Soak"
+        MEDICAL_CARE = "Medical Care"      # Vet giao: thay băng, bôi thuốc, cắt móng...
+        TRAINING_CARE = "Training Care"    # Trainer giao: dắt đi bộ thả lỏng, chườm chân sau buổi tập nặng...
+
+    class Intake(models.TextChoices):      # Groom ghi khi cho ăn
+        FULL = "Full"          # ăn hết
+        PARTIAL = "Partial"    # ăn một phần
+        REFUSED = "Refused"    # bỏ ăn
 
     class Status(models.TextChoices):
         PENDING = "Pending"
@@ -88,6 +96,8 @@ class CareTask(models.Model):
     # Việc hệ thống tự sinh: chỉ tiêu nào + khóa nguồn (không sinh trùng). Việc giao tay: cả hai NULL.
     rule_code = models.CharField(max_length=40, null=True, blank=True, db_column="RuleCode")
     source_key = models.CharField(max_length=120, null=True, blank=True, db_column="SourceKey")
+    intake_status = models.CharField(max_length=20, choices=Intake.choices, null=True, blank=True,
+                                     db_column="IntakeStatus")
 
     class Meta:
         managed = False
@@ -111,7 +121,9 @@ class CareTaskRule(models.Model):
     id = models.AutoField(primary_key=True, db_column="CareTaskRuleID")
     club = models.ForeignKey(Club, on_delete=models.DO_NOTHING, db_column="ClubID", related_name="care_rules")
     rule_code = models.CharField(max_length=40, choices=Code.choices, db_column="RuleCode")
-    task_type = models.CharField(max_length=50, choices=CareTask.TaskType.choices, db_column="TaskType")
+    # Chỉ tiêu chỉ sinh 4 loại việc hằng ngày (việc y tế / tập luyện do Vet / Trainer giao tay)
+    RULE_TASK_TYPES = [(t, t) for t in ("Feeding", "Cleaning", "Bathing", "Ice Leg Soak")]
+    task_type = models.CharField(max_length=50, choices=RULE_TASK_TYPES, db_column="TaskType")
     title = models.CharField(max_length=150, db_column="Title")
     time_of_day = models.TimeField(null=True, blank=True, db_column="TimeOfDay")
     offset_minutes = models.IntegerField(null=True, blank=True, db_column="OffsetMinutes")

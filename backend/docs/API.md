@@ -129,12 +129,12 @@ Login returns `Roles` and `Permissions`. The frontend uses `Permissions` to hide
 
 | Role (`RoleCode`) | Permissions | Main tasks |
 |---|---|---|
-| `CLUB_MANAGER` | `CLUB_MANAGE`, `RBAC_MANAGE`, `AUDIT_VIEW`, `HORSE_VIEW`, `HORSE_REGISTER_REVIEW`, `HORSE_ARCHIVE`, `PROFILE_EDIT_APPROVE`, `INVENTORY_MANAGE` | Approve horse profiles, stalls, accounts, inventory, assign care tasks |
-| `HEAD_TRAINER` | `HORSE_VIEW`, `HORSE_ASSESS`, `TRAINER_ASSIGN`, `TRAINING_PLAN_APPROVE`, `TRAINING_SESSION_ASSIGN`, `TRAINING_SESSION_SUPERVISE`, `HEALTH_REPORT`, `DIET_MANAGE`, `INVENTORY_REQUEST` | Assess horses, assign trainers, approve training plans, schedule training sessions, create diet plans, assign tasks to Grooms |
-| `TRAINER` | `HORSE_VIEW`, `TRAINING_PLAN_MANAGE`, `TRAINING_SESSION_ASSIGN`, `TRAINING_SESSION_SUPERVISE`, `TRAINING_REVIEW`, `HEALTH_REPORT` | Write training plans, schedule sessions **for the horses they are in charge of**, supervise (including as Substitute), review training sessions, close plan stages |
+| `CLUB_MANAGER` | `CLUB_MANAGE`, `RBAC_MANAGE`, `AUDIT_VIEW`, `HORSE_VIEW`, `HORSE_REGISTER_REVIEW`, `HORSE_ARCHIVE`, `PROFILE_EDIT_APPROVE`, `INVENTORY_MANAGE` | Approve horse profiles, stalls, accounts, **vet duty roster**, **Groom in charge of each horse**, inventory |
+| `HEAD_TRAINER` | `HORSE_VIEW`, `HORSE_ASSESS`, `TRAINER_ASSIGN`, `TRAINING_PLAN_APPROVE`, `TRAINING_SESSION_SUPERVISE`, `HEALTH_REPORT`, `DIET_MANAGE`, `INVENTORY_REQUEST` | Assess horses, assign the trainer **and the main work rider**, approve training plans, choose substitute supervisors (does **not** schedule daily sessions), write and finalize diet plans, set the club-wide care rules |
+| `TRAINER` | `HORSE_VIEW`, `TRAINING_PLAN_MANAGE`, `TRAINING_SESSION_ASSIGN`, `TRAINING_SESSION_SUPERVISE`, `TRAINING_REVIEW`, `HEALTH_REPORT` | Write training plans, schedule sessions **for the horses they are in charge of** (main work rider filled in), supervise (including as Substitute: may change rider / time of that session), review training sessions, close plan stages, training-related care tasks for Grooms |
 | `WORK_RIDER` | `HORSE_VIEW`, `TRAINING_RESULT_UPDATE`, `HEALTH_REPORT` | Start training sessions, record results |
-| `VETERINARIAN` | `HORSE_VIEW`, `MEDICAL_MANAGE`, `MEDICAL_SIGN`, `TRAINING_LOCK_MANAGE`, `DIET_MANAGE` | Examinations, signing records, Training Lock, treatments, vaccinations, approving diet plans |
-| `GROOM` | `HORSE_VIEW`, `CARE_MANAGE`, `HEALTH_REPORT`, `INVENTORY_REQUEST` | Care tasks, reporting incidents, requesting inventory items |
+| `VETERINARIAN` | `HORSE_VIEW`, `MEDICAL_MANAGE`, `MEDICAL_SIGN`, `TRAINING_LOCK_MANAGE`, `DIET_MANAGE`, `INVENTORY_REQUEST` | Examinations (on-duty vet is alerted first), signing records, Training Lock, treatments, vaccinations, commenting on diet plans (approving them only for sick / locked horses), medical care tasks for Grooms, supply requests |
+| `GROOM` | `HORSE_VIEW`, `CARE_MANAGE`, `HEALTH_REPORT`, `INVENTORY_REQUEST` | Care tasks (feeding: records eaten all / part / refused), reporting incidents, requesting inventory items |
 | `HORSE_OWNER` | `HORSE_REGISTER`, `PROFILE_EDIT_REQUEST`, `OWNER_VIEW` | Register horses, request profile changes, view own horses and their training results (section 5.7) |
 
 Data scope: staff only see data **within their own club**; horse owners only see **their own horses**
@@ -192,7 +192,7 @@ Example `POST /auth/login`:
 | POST | `/horses/{HorseID}/submit` | Owner, Manager | `Draft`/`Rejected` → `Submitted` |
 | POST | `/horses/{HorseID}/verify` | Manager | `Submitted` → `PendingExam` |
 | POST | `/horses/{HorseID}/reject` | Manager | `{"Reason"}`; `Submitted`/`PendingExam` → `Rejected` |
-| POST | `/horses/{HorseID}/approve` | Manager | `{"HorseCode", "StallID"?, "ManagerNote"?}`; `PendingExam` → `Approved` |
+| POST | `/horses/{HorseID}/approve` | Manager | `{"HorseCode", "StallID"?, "GroomID"?, "ManagerNote"?}`; `PendingExam` → `Approved`. `GroomID` = Groom in charge of the horse (Flow 4) |
 | POST | `/horses/{HorseID}/archive` | Manager | `{"Reason"}`; `Approved` → `Archived` |
 | GET | `/horses/{HorseID}/registration-requests` | can view the horse | history of submissions, rejection reasons |
 | GET | `/horses/{HorseID}/audit-logs` | Manager | action history |
@@ -369,6 +369,24 @@ Each horse can have only 1 `Pending` request at a time.
 Archiving a horse (`POST /horses/{id}/archive`) now also: ends the trainer assignment (unfinished training plans → `Cancelled`,
 `Assigned` training sessions → `Cancelled`), pending care tasks → `Skipped`, active diet plans → `Expired`.
 
+### 4.7 Vet duty roster
+
+The Club Manager schedules which vet is on duty. The on-duty vet is alerted first (email + `High` notification) when a
+horse is verified and waits for its intake exam, and when an **urgent** health report arrives (6.1). Other vets still see
+the queues and can take a case. Nobody on duty → every active vet of the club is alerted, and the Manager sees
+`VET_DUTY_MISSING` (today / tomorrow without any shift).
+
+Shifts: `Morning` 06:00–14:00, `Afternoon` 14:00–22:00, `Night` 22:00–06:00 next day, `Full Day`.
+
+| Method | URL | Used by | Notes |
+|---|---|---|---|
+| GET | `/vet-duty-shifts?From=&To=&VetID=` | Manager, Vet | default: 7 days from today; each row has `IsOnDutyNow` |
+| POST | `/vet-duty-shifts` | Manager | `{"VetID", "DutyDate", "Shift", "Note"?}`; past date → 409 `PAST_DATE`, same vet / day / shift → 409 `ALREADY_EXISTS` |
+| DELETE | `/vet-duty-shifts/{VetDutyShiftID}` | Manager | **204**; shifts in the past are kept as history (`PAST_DATE`) |
+| GET | `/vet-duty-shifts/now` | staff | shifts covering the current time (`[]` = nobody on duty) |
+
+Database: on an existing database run `sql/migrations/20261031_flow1_vet_duty.sql` (table `VetDutyShift`).
+
 ## 5. Flow 2 – Training
 
 ```
@@ -430,15 +448,12 @@ Race result body: `{"RaceDate", "RaceName", "RaceClass"? ("Group 1", "Group 2", 
 
 **Trainer suggestions** `GET /trainers?HorseID=5` use the horse's latest `Recommended` assessment (5.2):
 
-- the trainer must have the recommended specialization;
-- minimum level by `QualityScore` (a better horse aiming at bigger races needs a more experienced trainer):
-  `≥ 85` → `Senior` or higher, `≥ 70` → `Intermediate` or higher, lower / not scored → any level;
-- each row gets `IsSuggested`, `MatchesSpecialization`, `MatchesLevel`, `RequiredLevel` and `SuggestionReason`
-  (Vietnamese sentence to show); order: suggested first, then higher level, fewer active horses, higher rating.
+- trainers with the recommended specialization come first;
+- then higher `TrainerRating`, then more experience (`ExperienceLevel`, `YearsOfExperience`),
+  then fewer horses currently in charge (spreads the work);
+- each row gets `IsSuggested`, `MatchesSpecialization` and `SuggestionReason` (Vietnamese sentence to show).
 
 The trainer must have a specialization (`TrainerSpecialization`) matching the specialization of the assignment (a foreign key constraint in SQL).
-The level is only a suggestion: `POST /trainer-assignments` still accepts a lower-level trainer but returns
-`LevelWarning` (see 5.3).
 
 ### 5.2 Horse assessment
 
@@ -468,20 +483,31 @@ Each horse has only **1** `Active` responsible trainer (`ALREADY_ASSIGNED` if on
  "AssessmentID": 1, "StartDate": "2026-10-10", "EndDate": null, "Status": "Active", "AssignmentNote": null}
 ```
 
-`POST /trainer-assignments` also returns `TrainerExperienceLevel`, `RequiredLevel` and `LevelWarning`
-(`null`, or a sentence when the horse should go to a more experienced trainer – the assignment is still created),
-and `DraftTrainingPlanID`: the `Draft` training plan created automatically from the specialization's template (5.5.1),
+`POST /trainer-assignments` accepts `"WorkRiderID"?` = the horse's **main work rider** (5.4) and returns
+`TrainerExperienceLevel`, `MainWorkRiderID`, `MainWorkRiderName` and `DraftTrainingPlanID`: the `Draft` training plan created automatically from the specialization's template (5.5.1),
 or `null` when that template is switched off.
 
-### 5.4 Preferred work riders (familiar with the horse)
+### 5.4 Main work rider, backup riders, work rider specializations
+
+The Head Trainer chooses one **main work rider** per horse (when assigning the trainer, or later). It is stored as the
+active `HorseWorkRiderPreference` with `Priority = 1`; only the Head Trainer can change it. Backup riders have
+`Priority >= 2`. When the trainer schedules a session without `WorkRiderID`, the main work rider is filled in (5.6).
+Work Riders also have specializations (riding flat, jumping, driving a harness cart and long-distance riding are
+different skills); riders with the horse's specialization are suggested first.
 
 | Method | URL | Used by | Notes |
 |---|---|---|---|
+| GET | `/horses/{HorseID}/main-work-rider` | staff | the main work rider preference (`null` if none) |
+| PUT | `/horses/{HorseID}/main-work-rider` | Head Trainer | `{"WorkRiderID", "Note"?}`; the previous main rider ends; sessions already scheduled keep their rider |
 | GET | `/horses/{HorseID}/work-rider-preferences?all=1` | staff | by default returns only preferences still in effect |
-| POST | `/horses/{HorseID}/work-rider-preferences` | responsible Trainer, Head Trainer | `{"WorkRiderID", "Priority"? (1 = highest priority), "Note"?}` |
-| POST | `/work-rider-preferences/{PreferenceID}/end` | responsible Trainer, Head Trainer | |
+| POST | `/horses/{HorseID}/work-rider-preferences` | Head Trainer | backup rider `{"WorkRiderID", "Priority"? (>= 2, default 2), "Note"?}` |
+| POST | `/work-rider-preferences/{PreferenceID}/end` | Head Trainer | |
+| GET | `/work-riders?HorseID=&Date=&StartTime=&EndTime=&DurationPlannedMinutes=&ExcludeSessionID=` | Trainer, Head Trainer, Manager | riders to pick for a session: main rider first, then matching specialization, then free at that time. Each row: `IsMainRider`, `MatchesSpecialization`, `IsBusy`, `BusyWithSessionID`, `Specializations`. Without `HorseID`: all riders with their specializations |
+| POST | `/work-riders/{UserID}/specializations` | Head Trainer, Manager | `{"SpecializationID"}` (`ALREADY_EXISTS`) |
+| DELETE | `/work-riders/{UserID}/specializations/{SpecializationID}` | Head Trainer, Manager | **204** |
 
-Only used as suggestions when scheduling training sessions; each session still selects its own Work Rider.
+Database: on an existing database run `sql/migrations/20261031_flow2_main_rider.sql` (table `WorkRiderSpecialization`,
+and the Head Trainer loses `TRAINING_SESSION_ASSIGN`).
 
 ### 5.5 Training plans
 
@@ -507,7 +533,7 @@ Active ──revise──> new Draft version; when the new version is approved, 
 | POST | `/training-plans/{id}/complete` | responsible Trainer, Head Trainer | remaining `Assigned` sessions are cancelled |
 | POST | `/training-plans/{id}/cancel` | responsible Trainer, Head Trainer | `{"Reason"?}` |
 | POST | `/training-plans/{id}/revise` | responsible Trainer | copies an `Active`/`Completed` training plan into a new `Draft` version for adjustment |
-| POST | `/training-plan-stages/{TrainingPlanStageID}/close` | responsible Trainer, Head Trainer | `{"SummaryNote"?}` close a stage → stage summary sent to the horse owner (bell + email). Returns the stage summary (5.7) |
+| POST | `/training-plan-stages/{TrainingPlanStageID}/close` | responsible Trainer, Head Trainer | `{"SummaryNote"?}` close a stage → stage summary sent to the horse owner **and the Head Trainer** (bell `STAGE_SUMMARY` + email). Returns the stage summary (5.7) |
 
 Closing a stage: the training plan must be `Active` / `Completed`, the stage must have started (`NOT_STARTED`), not be closed yet
 (`ALREADY_CLOSED`) and have no `Assigned` / `In Progress` sessions left (`SESSIONS_PENDING`: finish, cancel or mark them missed).
@@ -624,23 +650,27 @@ Assigned / In Progress ──stop (supervising trainer, responsible Trainer, Hea
 Assigned / In Progress ──missed (from the session day onward)──> Missed
 ```
 
-Who schedules: the **responsible Trainer** for the horses they are in charge of, the **Head Trainer** for every horse
-(exceptions: trainer absent, urgent rider change). Another Trainer gets `403`. `AssignedByHeadTrainerID` stores whoever
-scheduled the session (column name kept for compatibility). `stop` = the horse has a problem (the owner is alerted);
-`cancel` = ordinary cancellation (weather, schedule change).
+Who schedules: only the **responsible Trainer** of the horse (create, edit, cancel, mark missed). The Head Trainer does
+**not** schedule daily sessions; when the trainer is away the Head Trainer chooses a **substitute supervisor**, who may
+change the rider and the time of the sessions they supervise. Others get `403`. `AssignedByHeadTrainerID` stores whoever
+scheduled the session (column name kept for compatibility). `stop` = the horse has a problem (the owner is alerted;
+supervising trainer, responsible Trainer or Head Trainer); `cancel` = ordinary cancellation (weather, schedule change).
 
 | Method | URL | Used by | Notes |
 |---|---|---|---|
 | GET | `/training-sessions?Date=&From=&To=&HorseID=&TrainingPlanID=&WorkRiderID=&Status=&mine=1` | staff | `mine=1`: Work Rider → sessions they ride; Trainer → sessions they supervise (responsible or Substitute) |
 | GET | `/training-sessions/{id}` | staff | |
-| POST | `/training-sessions` | responsible Trainer, Head Trainer | schedule a training session (the training plan must be `Active`) |
-| PATCH | `/training-sessions/{id}` | responsible Trainer, Head Trainer | when `Assigned`: change Work Rider, Substitute, date/time, intensity... |
+| POST | `/training-sessions` | responsible Trainer | schedule a training session (the training plan must be `Active`); no `WorkRiderID` = main work rider |
+| PATCH | `/training-sessions/{id}` | responsible Trainer; the session's substitute supervisor (only `WorkRiderID`, `StartTime`, `EndTime`, `SequenceNo`, `RiderChangeReason`) | when `Assigned`: change Work Rider, date/time, intensity... |
 | POST | `/training-sessions/{id}/start` | the session's Work Rider | on the session day |
 | POST | `/training-sessions/{id}/result` | the session's Work Rider | record the result → `Completed` |
 | POST | `/training-sessions/{id}/substitute-observation` | the session's Substitute Trainer | `{"SubstituteObservation"}` (required for substitute-supervised sessions) |
 | POST | `/training-sessions/{id}/stop` | supervising trainer, responsible Trainer, Head Trainer | `{"Reason", "ReportHealth"?, "Severity"?, "Description"?}`; the owner gets an urgent alert + email |
-| POST | `/training-sessions/{id}/cancel` | responsible Trainer, Head Trainer | `{"Reason"?}` |
-| POST | `/training-sessions/{id}/missed` | responsible Trainer, Head Trainer | `{"Reason"?}` |
+| POST | `/training-sessions/{id}/substitute` | Head Trainer | `{"SubstituteTrainerID": 6 \| null, "Reason"?}` – `Assigned` sessions only; the substitute gets `SUBSTITUTE_ASSIGNED`, the responsible trainer `SUBSTITUTE_SET` |
+| POST | `/training-sessions/substitute-day` | Head Trainer | `{"TrainerID", "Date", "SubstituteTrainerID", "Reason"?}` – trainer away all day: one substitute for all their `Assigned` sessions that day; returns the sessions |
+| GET | `/training-sessions/{id}/substitute-suggestions` | Head Trainer | Trainers / Head Trainers: same specialization first, then free at that time (`MatchesSpecialization`, `IsBusy`) – a different specialization is still allowed |
+| POST | `/training-sessions/{id}/cancel` | responsible Trainer | `{"Reason"?}` |
+| POST | `/training-sessions/{id}/missed` | responsible Trainer | `{"Reason"?}` |
 | POST | `/training-sessions/{id}/review` | responsible Trainer | review a `Completed` session (once per session) |
 | GET | `/training-reviews?AdjustmentRequired=1&HorseID=&Days=14` | staff | Head Trainer tracks training plan adjustment requests |
 | GET | `/training-dashboard?HorseID=` | staff | overview screen before scheduling (same as the `vw_HorseTrainingDashboard` view) |
@@ -656,8 +686,13 @@ Body `POST /training-sessions`:
 }
 ```
 
-- `SubstituteTrainerID`: `null` = the responsible trainer supervises. Choose another Trainer (or the Head Trainer supervises)
-  when the responsible trainer is busy. If it is the same as the responsible trainer, the backend treats it as `null`.
+- `WorkRiderID` left empty = the horse's **main work rider**. If that rider already has another session overlapping
+  this time (`EndTime`, or `StartTime` + `DurationPlannedMinutes`, default 60 minutes) → 409 `MAIN_RIDER_BUSY`
+  (another chosen rider → `RIDER_BUSY`); pick another rider for this session only.
+- `RiderChangeReason`? (write only): why this session is not ridden by the main rider / why the rider changed. Whenever a
+  session goes to someone other than the main rider (or the rider of a session is changed), the Head Trainer gets
+  `RIDER_CHANGED` (with the reason) and the replaced rider gets `RIDER_REMOVED`.
+- `SubstituteTrainerID`: only `null` is accepted here; the Head Trainer sets the substitute with the endpoints below.
 - `SequenceNo` left empty = the next slot in the Work Rider's day (`RIDER_SLOT_TAKEN` if it conflicts).
 - Cannot schedule on a past date; the session date must fall within the stage.
 - **Training Lock**: `Full` → cannot schedule / start (`TRAINING_LOCK_FULL`); `Restricted` → `TrainingLoad` is required
@@ -814,6 +849,7 @@ Medical records (`/horses/{id}/medical-records`, `/medical-records/...`) are sha
 
 - An `Urgent` report linked to the `TrainingSessionID` of a session that is `In Progress` → the session stops automatically (`Cancelled`), and the response includes `"StoppedSession": true`.
 - The supervising trainer can also stop the session and report at once: `POST /training-sessions/{id}/stop` with `"ReportHealth": true` (section 5.6).
+- An `Urgent` report is **emailed at once** to the on-duty vet (4.7); nobody on duty → every vet of the club.
 - Vet creates a medical record with `"HealthReportID"` → the report is automatically linked to the record and moves to `Reviewing`. Each report is linked to 1 record (`REPORT_ALREADY_LINKED`).
 
 ```json
@@ -858,6 +894,9 @@ Specific error codes: `REPORT_RESOLVED`, `REPORT_ALREADY_LINKED`.
   - sending `{"TrainingLock": {...}}` → creates a lock (or updates the existing lock) accordingly;
   - not sending it with a `Not Eligible` conclusion → the backend automatically locks `Full` (or raises a `Restricted` lock to `Full`);
   - an `Eligible` conclusion does **not** release the lock automatically: the Vet releases it after the follow-up examination.
+- Creating a lock, changing its level / `MaxIntensity`, and releasing it are reported to the **responsible Trainer** and
+  the **Head Trainers** (bell `TRAINING_LOCKED` / `TRAINING_LOCK_CHANGED` / `TRAINING_UNLOCKED` + email, reminding them
+  to review the training plan). A level change is also sent to the owner (`OWNER_TRAINING_LOCK_CHANGED` + email).
 
 ```json
 {"TrainingLockID": 3, "HorseID": 1, "HorseName": "Thunder", "CreatedByVetID": 3, "CreatedByName": "Demo Veterinarian",
@@ -886,15 +925,32 @@ Specific error codes: `LOCK_EXISTS`, `FOLLOW_UP_EXAM_REQUIRED`.
 ## 7. Flow 4 – Care and nutrition
 
 On an existing database run `sql/migrations/20261020_care_rules_diet_training.sql` (diet ↔ training plan link, generated care
-tasks, `CareTaskRule`, `HorseGroom`).
+tasks, `CareTaskRule`, `HorseGroom`), then `sql/migrations/20261031_flow4_care_roles.sql` (`CareTask.IntakeStatus`, task types
+`Medical Care` / `Training Care`, Vet gets `INVENTORY_REQUEST`).
+
+**Who sees what** (backend returns 403 otherwise):
+
+| Role | Care tasks, diet plans |
+|---|---|
+| Vet, Head Trainer | whole club |
+| Trainer | horses they are in charge of (+ tasks they assigned) |
+| Groom | their own tasks; diets of the horses they look after |
+| Manager | only the Groom board (`/horse-grooms`, `/grooms`) and inventory |
+| Work Rider, Owner | nothing |
 
 ### 7.1 Diet plans
 
 ```
+Head Trainer creates (Pending) ──Vet comment (advice)──> Head Trainer finalize ──> Approved
+Sick / injured / isolated horse, or horse under an active Training Lock (NeedsVetApproval = true):
 Head Trainer creates (Pending) ──Vet approve──> Approved ──Vet adjust──> Adjusted
      ^                          │ Vet reject (VetNote required)
      └── Head Trainer edits ── Rejected
 ```
+
+The project has no separate nutritionist role: the **Vet gives the nutrition advice** and the **Head Trainer decides**.
+For a sick horse (or one under a Training Lock) the Vet's opinion comes first: the plan needs the Vet's approval and only
+the Vet adjusts the plan in effect.
 
 | Method | URL | Who uses it | Notes |
 |---|---|---|---|
@@ -902,12 +958,14 @@ Head Trainer creates (Pending) ──Vet approve──> Approved ──Vet adjus
 | GET | `/horses/{HorseID}/diet-context` | staff | **what the Head Trainer looks at before writing a diet**: active training plan, current stage (intensity, load, distance target), last 14 days of training, sessions in the next 7 days, Training Lock, latest weight, current diet, `Notes` (suggestions) |
 | POST | `/horses/{HorseID}/diet-plans` | Head Trainer | `{"DietDescription"?, "StartDate", "EndDate"?, "TrainingPlanID"?, "Meals": [...]}` (at least 1 meal). Without `TrainingPlanID` the horse's `Active` training plan is linked automatically |
 | GET | `/horses/{HorseID}/current-diet` | staff | diet plan in effect today (`null` if none) – the Groom's screen |
-| GET | `/diet-plans?Status=Pending&HorseID=` | staff | Vet views diet plans awaiting approval |
+| GET | `/diet-plans?Status=Pending&HorseID=` | see the table above | each plan has `VetCommented`, `NeedsVetApproval` |
 | GET | `/diet-plans/{id}` | staff | |
 | PATCH | `/diet-plans/{id}` | Head Trainer | when `Pending`/`Rejected`; sending `Meals` replaces all meals; after editing → `Pending` |
-| POST | `/diet-plans/{id}/approve` | Vet | `{"VetNote"?}` (the creator cannot approve their own plan) |
-| POST | `/diet-plans/{id}/reject` | Vet | `{"VetNote"}` |
-| POST | `/diet-plans/{id}/adjust` | Vet | `{"VetNote", "Meals"?, "EndDate"?...}` – adjust the diet plan currently in effect |
+| POST | `/diet-plans/{id}/comment` | Vet | `{"VetNote"}` advice; the plan stays `Pending`; the Head Trainer gets `DIET_COMMENTED` |
+| POST | `/diet-plans/{id}/finalize` | Head Trainer | `Pending` → `Approved`; needs a Vet comment first (`VET_COMMENT_REQUIRED`); sick / locked horse → `VET_APPROVAL_REQUIRED` |
+| POST | `/diet-plans/{id}/approve` | Vet | sick / locked horse only (otherwise `VET_APPROVAL_NOT_NEEDED`): `{"VetNote"?}` |
+| POST | `/diet-plans/{id}/reject` | Vet | sick / locked horse only: `{"VetNote"}` |
+| POST | `/diet-plans/{id}/adjust` | Vet | sick / locked horse only: `{"VetNote", "Meals"?, "EndDate"?...}` – adjust the diet plan currently in effect |
 
 ```json
 {"MealTime": "06:00", "FeedType": "Oats", "Quantity": 3, "Unit": "kg", "Note": null}
@@ -933,7 +991,7 @@ effect was written for another (older) training plan, the Head Trainer sees `DIE
 `Notes` examples: high-intensity stage → more energy and electrolytes; long recovery time; Training Lock → less energy, more fibre;
 current diet not written for the active plan / no diet yet.
 
-When a new diet plan is approved: an overlapping old plan that started earlier ends on the day before the new plan's start date;
+When a new diet plan takes effect (finalized or approved): an overlapping old plan that started earlier ends on the day before the new plan's start date;
 one that starts on the same day / later becomes `Expired`. If the new plan starts in the future, the current plan stays in use until that day.
 
 ```json
@@ -944,12 +1002,16 @@ one that starts on the same day / later becomes `Expired`. If the new plan start
  "Meals": [{"DietMealID": 1, "MealTime": "06:00:00", "FeedType": "Oats", "Quantity": 3.0, "Unit": "kg", "Note": null}]}
 ```
 
-Specific error codes: `SELF_APPROVAL`.
+Specific error codes: `SELF_APPROVAL`, `VET_COMMENT_REQUIRED`, `VET_APPROVAL_REQUIRED`, `VET_APPROVAL_NOT_NEEDED`.
 
 ### 7.2 Care tasks
 
-**Grooms do not create tasks.** Daily tasks are **generated by the system from the club's rules** (`CareTaskRule`);
-the Head Trainer / Manager can still assign extra tasks by hand. The Groom completes or skips (with a reason).
+**Grooms do not create tasks.** Daily tasks are **generated by the system from the club's rules** (`CareTaskRule`, set by
+the Head Trainer) for the Groom in charge of the horse (the Manager assigns Grooms to horses). Extra tasks come from the
+people with the expertise: the **Vet** assigns medical care (`Medical Care`, `Ice Leg Soak`) for any horse, the
+**responsible Trainer** assigns training-related care (`Training Care`, `Bathing`) for their own horses. The person who
+assigns a task does not pick the Groom: it goes to the Groom in charge of the horse (none → the Groom with the fewest
+tasks that day). The Groom completes (feeding: records `IntakeStatus`) or skips (with a reason).
 
 | Rule (`RuleCode`) | Task | When |
 |---|---|---|
@@ -962,20 +1024,27 @@ the Head Trainer / Manager can still assign extra tasks by hand. The Groom compl
   when the Groom opens notifications, with `POST /care-tasks/generate`, or with `python manage.py generate_care_tasks --days 2`.
 - No duplicates: each generated task has a `SourceKey`. When the source changes (new diet, rule turned off, lock released),
   generated tasks that are still `Pending` and not yet due are removed.
-- Assignee: the horse's Groom in charge (`/horses/{id}/groom`); if the horse has none, the active Groom with the fewest tasks that day.
+- Assignee: the horse's Groom in charge (`/horses/{id}/groom`, set by the Manager); if the horse has none, the active Groom with the fewest tasks that day.
+- Changing the Groom in charge moves **all** pending tasks of the horse (generated and assigned) to the new Groom.
 
 | Method | URL | Who uses it | Notes |
 |---|---|---|---|
-| GET | `/care-tasks?Date=&From=&To=&HorseID=&GroomID=&Status=&Auto=1&mine=1` | staff | `mine=1`: tasks of the logged-in Groom; `Auto=1`: generated tasks only |
-| GET | `/care-tasks/{id}` | staff | |
-| POST | `/care-tasks` | Head Trainer, Manager | extra task: `{"HorseID", "GroomID", "TaskType", "ScheduledAt", "Note"?}`. A Groom gets `403` |
-| POST | `/care-tasks/generate` | Head Trainer, Manager | `{"Date"?, "Days"? (1–8)}` → `[{"Date", "Created", "Removed", "Unassigned"}]` |
-| PATCH | `/care-tasks/{id}` | Head Trainer, Manager | when `Pending` |
-| POST | `/care-tasks/{id}/complete` | assigned Groom | `{"Note"?}` → `Completed` |
-| POST | `/care-tasks/{id}/skip` | assigned Groom, Head Trainer, Manager | `{"Reason"}` → `Skipped` |
-| GET | `/care-rules` | staff | the club's rules (default rules are created automatically) |
-| PATCH | `/care-rules/{RuleCode}` | Head Trainer, Manager | `{"IsActive"?, "TimeOfDay"?, "OffsetMinutes"? (0–240), "Title"?}` – applied at once to today and already generated days |
-| GET / PUT / DELETE | `/horses/{HorseID}/groom` | staff (GET), Head Trainer / Manager | Groom in charge `{"GroomID"}`; pending generated tasks move to the new Groom |
+| GET | `/care-tasks?Date=&From=&To=&HorseID=&GroomID=&Status=&Auto=1&mine=1` | Vet, Head Trainer, Trainer, Groom (scope above) | `mine=1`: tasks of the logged-in Groom; `Auto=1`: generated tasks only |
+| GET | `/care-tasks/{id}` | same | |
+| POST | `/care-tasks` | Vet, responsible Trainer | extra task `{"HorseID", "TaskType", "ScheduledAt", "Note"?}` – Vet: `Medical Care` / `Ice Leg Soak`; Trainer: `Training Care` / `Bathing` (own horses). Others `403`; no Groom in the club → `NO_GROOM` |
+| POST | `/care-tasks/generate` | Head Trainer | `{"Date"?, "Days"? (1–8)}` → `[{"Date", "Created", "Removed", "Unassigned"}]` |
+| PATCH | `/care-tasks/{id}` | the person who assigned it | when `Pending`: `TaskType`, `ScheduledAt`, `Note` (`NOT_TASK_OWNER`) |
+| POST | `/care-tasks/{id}/complete` | assigned Groom | `{"Note"?, "IntakeStatus"?}` → `Completed`. Feeding only: `IntakeStatus` = `Full` (ate all) / `Partial` / `Refused` |
+| POST | `/care-tasks/{id}/skip` | assigned Groom, the person who assigned it | `{"Reason"}` → `Skipped` |
+| GET | `/care-rules` | Vet, Head Trainer, Trainer, Groom | the club's rules (default rules are created automatically) |
+| PATCH | `/care-rules/{RuleCode}` | Head Trainer | `{"IsActive"?, "TimeOfDay"?, "OffsetMinutes"? (0–240), "Title"?}` – applied at once to today and already generated days |
+| GET | `/horses/{HorseID}/groom` | Manager, Vet, Head Trainer; Trainer / Groom for their horses | Groom in charge (`null` if none) |
+| PUT / DELETE | `/horses/{HorseID}/groom` | Manager | `{"GroomID"}`; response adds `MovedTaskCount`, `GroomHorseCount`, `Warning` (Groom keeps more than 4 horses – not blocked) |
+| GET | `/horse-grooms` | Manager, Vet, Head Trainer | Groom board: every `Approved` horse with its Groom (`GroomID` `null` = none) |
+| GET | `/grooms` | Manager, Vet, Head Trainer | active Grooms with `HorseCount`, `OverLimit` |
+
+Two completed feedings in a row with `IntakeStatus = Refused` → `FEED_REFUSED` (High) for the Vets and the responsible
+Trainer: refusing food is usually the first sign of illness.
 
 `TaskType`: `Feeding`, `Cleaning`, `Bathing`, `Ice Leg Soak`. Generated tasks have `RuleCode` and `IsAuto: true`,
 `AssignedBy: null`. If the horse looks abnormal during care → report it via section 6.1.
@@ -993,12 +1062,12 @@ Specific error codes: `NOT_TASK_OWNER`, `NOT_TASK_GROOM`.
 
 | Method | URL | Who uses it | Notes |
 |---|---|---|---|
-| GET | `/inventory-items?ItemType=&Status=&LowStock=1` | Manager, Groom, Head Trainer | |
+| GET | `/inventory-items?ItemType=&Status=&LowStock=1` | Manager, Groom, Vet, Head Trainer | the Vet checks medicine stock before prescribing |
 | POST | `/inventory-items` | Manager | `{"ItemName", "ItemType", "Unit", "Quantity"?, "MinimumQuantity"?}` |
 | PATCH | `/inventory-items/{id}` | Manager | `ItemName`, `ItemType`, `Unit`, `MinimumQuantity`; `"Status": "Inactive"` to discontinue, `"Reactivate": true` to reactivate |
 | POST | `/inventory-items/{id}/stock` | Manager | `{"Change": 50, "Note"?}` – stock in (positive number) / adjust down (negative number) |
-| GET | `/inventory-requests?Status=&mine=1` | Manager (whole club), Groom / Head Trainer (their own) | |
-| POST | `/inventory-requests` | Groom, Head Trainer | `{"Reason"?, "Items": [{"InventoryItemID", "RequestedQuantity", "Note"?}]}` |
+| GET | `/inventory-requests?Status=&mine=1` | Manager (whole club), Groom / Vet / Head Trainer (their own) | |
+| POST | `/inventory-requests` | Groom, Vet, Head Trainer | `{"Reason"?, "Items": [{"InventoryItemID", "RequestedQuantity", "Note"?}]}` |
 | POST | `/inventory-requests/{id}/approve` | Manager | `{"Items"?: [{"InventoryItemID", "ApprovedQuantity"}]}` – empty = approve in full; deducts stock |
 | POST | `/inventory-requests/{id}/reject` | Manager | `{"Note"}` |
 | POST | `/inventory-requests/{id}/cancel` | requester | while still `Pending` |
@@ -1043,13 +1112,13 @@ Sorting: `Priority = High` first, newest first. `EntityName` + `EntityID` tell w
 
 | Role | `Type` |
 |---|---|
-| Club Manager | `HORSE_TO_VERIFY`, `HORSE_TO_APPROVE`, `PROFILE_CHANGE`, `INVENTORY_REQUEST`, `LOW_STOCK` |
-| Vet | `HEALTH_REPORT`, `INITIAL_EXAM`, `VACCINATION_DUE`, `MEDICAL_SCHEDULE`, `DRAFT_RECORD`, `DIET_TO_REVIEW` |
-| Head Trainer | `HEALTH_REPORT` (all horses in the club), `PLAN_TO_APPROVE`, `ADJUSTMENT_REQUIRED`, `STAGE_TO_CLOSE`, `DIET_RETURNED`, `DIET_REVIEW_NEEDED` |
-| Trainer | `HEALTH_REPORT` (horses they are in charge of), `PLAN_DRAFT_FROM_TEMPLATE`, `PLAN_RETURNED`, `SUPERVISE_TODAY`, `SUBSTITUTE_OBSERVATION`, `SESSION_TO_REVIEW`, `STAGE_TO_CLOSE` |
-| Work Rider | `RIDE_TODAY` |
+| Club Manager | `HORSE_TO_VERIFY`, `HORSE_TO_APPROVE`, `PROFILE_CHANGE`, `INVENTORY_REQUEST`, `LOW_STOCK`, `VET_DUTY_MISSING`, `HORSE_WITHOUT_GROOM` |
+| Vet | `HEALTH_REPORT`, `INITIAL_EXAM` (High when on duty), `VACCINATION_DUE`, `MEDICAL_SCHEDULE`, `DRAFT_RECORD`, `DIET_TO_REVIEW` (advice, or approval for sick / locked horses), `FEED_REFUSED` |
+| Head Trainer | `HEALTH_REPORT` (all horses in the club), `PLAN_TO_APPROVE`, `ADJUSTMENT_REQUIRED`, `STAGE_TO_CLOSE`, `STAGE_SUMMARY`, `RIDER_CHANGED`, `TRAINING_LOCKED`, `TRAINING_LOCK_CHANGED`, `TRAINING_UNLOCKED`, `DIET_RETURNED`, `DIET_COMMENTED`, `DIET_REVIEW_NEEDED` |
+| Trainer | `HEALTH_REPORT` (horses they are in charge of), `PLAN_DRAFT_FROM_TEMPLATE`, `PLAN_RETURNED`, `SUPERVISE_TODAY`, `SUBSTITUTE_ASSIGNED`, `SUBSTITUTE_SET`, `SUBSTITUTE_OBSERVATION`, `SESSION_TO_REVIEW`, `STAGE_TO_CLOSE`, `TRAINING_LOCKED`, `TRAINING_LOCK_CHANGED`, `TRAINING_UNLOCKED`, `FEED_REFUSED` |
+| Work Rider | `RIDE_TODAY`, `RIDER_REMOVED` |
 | Groom | `CARE_TASK` (generated + assigned tasks due today / overdue) |
-| Horse Owner | `HORSE_REJECTED`, `PROFILE_CHANGE_DONE`, `OWNER_SESSIONS_REVIEWED` (new reviewed sessions, grouped per horse), `OWNER_STAGE_SUMMARY`, `OWNER_PLAN_SUMMARY`, `OWNER_PLAN_APPROVED`, `OWNER_SESSION_STOPPED` (High); Flow 3: `OWNER_TRAINING_LOCKED` (High), `OWNER_TRAINING_UNLOCKED` |
+| Horse Owner | `HORSE_REJECTED`, `PROFILE_CHANGE_DONE`, `OWNER_SESSIONS_REVIEWED` (new reviewed sessions, grouped per horse), `OWNER_STAGE_SUMMARY`, `OWNER_PLAN_SUMMARY`, `OWNER_PLAN_APPROVED`, `OWNER_SESSION_STOPPED` (High); Flow 3: `OWNER_TRAINING_LOCKED` (High), `OWNER_TRAINING_LOCK_CHANGED` (High), `OWNER_TRAINING_UNLOCKED` |
 
 ## 9. Frontend changes (Flow 1)
 
@@ -1205,18 +1274,18 @@ Suggested screens by role:
 | Head Trainer | Horse overview (training lock, trainer, latest session) | `GET /training-dashboard` |
 | Head Trainer | Horse assessment, trainer assignment | `POST /horses/{id}/assessments`, `GET /trainers`, `POST /trainer-assignments`, `POST /trainer-assignments/{id}/end` |
 | Head Trainer | Approve training plans | `GET /training-plans?Status=Pending Approval`, `POST /training-plans/{id}/approve`, `.../return` |
-| Head Trainer | Training schedule (all horses; exceptions) | `GET /training-sessions?From=&To=`, `POST /training-sessions`, `PATCH /training-sessions/{id}`, `GET /users?RoleCode=WORK_RIDER` |
-| Head Trainer | Diet plans, assign Groom tasks | `POST /horses/{id}/diet-plans`, `POST /care-tasks` |
+| Head Trainer | Training schedule (view), substitute supervisors, main work riders | `GET /training-sessions?From=&To=`, `POST /training-sessions/substitute-day`, `POST /training-sessions/{id}/substitute`, `GET .../substitute-suggestions`, `PUT /horses/{id}/main-work-rider`, `POST /work-riders/{id}/specializations` |
+| Head Trainer | Diet plans (finalize after the Vet's advice) | `POST /horses/{id}/diet-plans`, `POST /diet-plans/{id}/finalize` |
 | Trainer | Assigned horses, write training plans | `GET /trainer-assignments?mine=1`, `POST /training-plans`, `.../stages`, `.../submit`, `.../revise` |
-| Trainer | Schedule sessions for own horses, close stages | `POST /training-sessions`, `PATCH /training-sessions/{id}`, `.../cancel`, `GET /users?RoleCode=WORK_RIDER`, `POST /training-plan-stages/{id}/close` |
+| Trainer | Schedule sessions for own horses, close stages, training-related care tasks | `POST /training-sessions`, `PATCH /training-sessions/{id}`, `.../cancel`, `GET /work-riders?HorseID=&Date=&StartTime=`, `POST /training-plan-stages/{id}/close`, `POST /care-tasks` |
 | Trainer | Today's supervised sessions, session review | `GET /training-sessions?mine=1&Date=`, `.../stop`, `.../substitute-observation`, `.../review` |
 | Work Rider | Today's rides, record results | `GET /training-sessions?mine=1&Date=`, `.../start`, `.../result` |
 | Vet | Health report queue | `GET /health-reports?open=1`, `.../take`, `.../resolve` |
 | Vet | Examination, prescribe treatments, sign, Training Lock | `POST /horses/{id}/medical-records`, `.../treatments`, `POST /medical-records/{id}/sign`, `POST /training-locks/{id}/release` |
-| Vet | Vaccinations, medical schedule, approve diet plans | `GET /vaccinations?DueWithinDays=14`, `POST /diet-plans/{id}/approve` |
-| Groom | Today's tasks (generated by rules), diet plan, report incidents, request inventory | `GET /care-tasks?mine=1&Date=`, `.../complete`, `.../skip`, `GET /horses/{id}/current-diet`, `POST /horses/{id}/health-reports`, `POST /inventory-requests` |
-| Head Trainer | Write diet by training plan, care rules, Groom in charge | `GET /horses/{id}/diet-context`, `POST /horses/{id}/diet-plans`, `GET/PATCH /care-rules`, `PUT /horses/{id}/groom` |
-| Manager | Inventory, approve requests | `GET /inventory-items`, `POST /inventory-items/{id}/stock`, `POST /inventory-requests/{id}/approve` |
+| Vet | Vaccinations, medical schedule, diet advice / approval, medical care tasks, supply requests | `GET /vaccinations?DueWithinDays=14`, `POST /diet-plans/{id}/comment`, `.../approve`, `POST /care-tasks`, `POST /inventory-requests` |
+| Groom | Today's tasks (generated by rules), diet plan, report incidents, request inventory | `GET /care-tasks?mine=1&Date=`, `.../complete` (`IntakeStatus` for feeding), `.../skip`, `GET /horses/{id}/current-diet`, `POST /horses/{id}/health-reports`, `POST /inventory-requests` |
+| Head Trainer | Write diet by training plan, care rules | `GET /horses/{id}/diet-context`, `POST /horses/{id}/diet-plans`, `GET/PATCH /care-rules`, `POST /care-tasks/generate` |
+| Manager | Inventory, approve requests, Groom board, vet duty roster | `GET /inventory-items`, `POST /inventory-items/{id}/stock`, `POST /inventory-requests/{id}/approve`, `GET /horse-grooms`, `GET /grooms`, `PUT /horses/{id}/groom`, `GET/POST /vet-duty-shifts` |
 | Horse Owner | Training tab of a horse: plan + stage summaries, session list, session detail | `GET /owner/horses/{id}/training-plans`, `GET /owner/training-plans/{id}`, `GET /owner/horses/{id}/training-sessions`, `GET /owner/training-sessions/{id}` |
 | All roles | Notification bell | `GET /notifications` |
 

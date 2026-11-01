@@ -1,14 +1,15 @@
 """
 Việc chăm sóc TỰ SINH theo chỉ tiêu (Groom không tự tạo việc).
 
-Chỉ tiêu của mỗi CLB (bảng CareTaskRule, Head Trainer / Manager bật / tắt, đổi giờ):
+Chỉ tiêu của mỗi CLB (bảng CareTaskRule, Head Trainer bật / tắt, đổi giờ):
   FEEDING_BY_DIET       Cho ăn  : mỗi bữa trong khẩu phần đang áp dụng (Approved / Adjusted), đúng giờ bữa ăn.
   DAILY_CLEANING        Dọn chuồng: mỗi ngày, lúc TimeOfDay (mặc định 07:30).
   BATH_AFTER_TRAINING   Tắm, kiểm tra chân: sau mỗi buổi tập đã xong trong ngày, EndTime + OffsetMinutes (30 phút).
   ICE_SOAK_WHEN_LOCKED  Ngâm chân nước đá: mỗi ngày ngựa đang bị Vet khóa tập (Flow 3), lúc TimeOfDay (16:00).
 Chỉ sinh cho ngựa Approved, từ hôm nay đến tối đa 7 ngày tới (không sinh việc cho ngày đã qua).
 
-Giao cho ai: Groom phụ trách ngựa (HorseGroom); ngựa chưa có Groom phụ trách -> Groom đang hoạt động ít việc nhất ngày đó.
+Giao cho ai: Groom phụ trách ngựa (HorseGroom, Manager xếp); ngựa chưa có Groom phụ trách -> Groom đang hoạt động
+ít việc nhất ngày đó.
 Không sinh trùng: mỗi việc có SourceKey (vd "FEEDING_BY_DIET:2026-10-20:15" = bữa ăn 15 của ngày 20/10).
 Nguồn thay đổi (khẩu phần mới, tắt chỉ tiêu, hết khóa tập...) -> việc tự sinh CHƯA LÀM, CHƯA TỚI GIỜ của ngày đó bị xóa.
 
@@ -123,9 +124,12 @@ def generate_for_day(club, day, user=None):
         .exclude(source_key__in=keys)
     removed = stale.count()
     stale.delete()
+    # Nguồn đổi (vd Vet điều chỉnh khẩu phần -> bữa ăn có mã mới) nhưng việc cùng ngựa, cùng chỉ tiêu, cùng giờ
+    # đã có (đã làm / bỏ qua / đang chờ) thì không sinh thêm bản trùng.
+    taken = set(day_tasks.values_list("horse_id", "rule_code", "scheduled_at"))
     picker, created, unassigned = GroomPicker(club, day), [], 0
     for horse, rule, at, key, note in expected:
-        if key in existing:
+        if key in existing or (horse.id, rule.rule_code, at) in taken:
             continue
         groom = picker.pick(horse)
         if groom is None:
@@ -151,10 +155,8 @@ def set_horse_groom(horse, groom, user):
     else:
         link.groom, link.assigned_by, link.assigned_at = groom, user, timezone.now()
         link.save()
-    # việc tự sinh chưa làm của ngựa (từ giờ trở đi) chuyển cho Groom mới
-    moved = CareTask.objects.filter(horse=horse, status="Pending", rule_code__isnull=False,
-                                    scheduled_at__gte=timezone.now().replace(tzinfo=None)).exclude(groom=groom) \
-        .update(groom=groom)
+    # mọi việc chưa làm của ngựa (tự sinh lẫn do Vet / Trainer giao) chuyển cho Groom mới
+    moved = CareTask.objects.filter(horse=horse, status="Pending").exclude(groom=groom).update(groom=groom)
     log_action(user, "SET_HORSE_GROOM", horse, {"GroomID": groom.id, "MovedTaskCount": moved})
     return link, moved
 

@@ -32,12 +32,24 @@ class DietPlanSerializer(DBColumnModelSerializer):
     ReviewedByName = serializers.CharField(source="reviewed_by.full_name", read_only=True, default=None)
     Meals = DietMealSerializer(source="meals", many=True, read_only=True)
     TrainingPlanID = serializers.IntegerField(source="training_plan_id", read_only=True)
+    # Pending: VetCommented = Vet đã góp ý (Head Trainer chốt được); NeedsVetApproval = ngựa bệnh / bị khóa tập
+    VetCommented = serializers.SerializerMethodField()
+    NeedsVetApproval = serializers.SerializerMethodField()
 
     class Meta:
         model = DietPlan
         fields = ["id", "horse", "HorseName", "created_by", "CreatedByName", "reviewed_by", "ReviewedByName",
-                  *DIET_FIELDS, "status", "vet_note", "created_at", "approved_at", "TrainingPlanID", "Meals"]
+                  *DIET_FIELDS, "status", "vet_note", "created_at", "approved_at", "TrainingPlanID", "VetCommented",
+                  "NeedsVetApproval", "Meals"]
         read_only_fields = fields
+
+    def get_VetCommented(self, obj):
+        return obj.reviewed_by_id is not None and bool(obj.vet_note)
+
+    def get_NeedsVetApproval(self, obj):
+        from .services import needs_vet_approval
+
+        return needs_vet_approval(obj.horse)
 
 
 class DietPlanWriteSerializer(DBColumnModelSerializer):
@@ -74,22 +86,29 @@ class CareTaskSerializer(DBColumnModelSerializer):
     class Meta:
         model = CareTask
         fields = ["id", "horse", "HorseName", "groom", "GroomName", "assigned_by", "AssignedByName", "task_type",
-                  "scheduled_at", "status", "completed_at", "note", "rule_code", "IsAuto"]
+                  "scheduled_at", "status", "completed_at", "note", "rule_code", "intake_status", "IsAuto"]
         read_only_fields = fields
 
     IsAuto = serializers.BooleanField(source="is_auto", read_only=True)
 
 
 class CareTaskWriteSerializer(DBColumnModelSerializer):
-    """Head Trainer / Manager giao việc ngoài chỉ tiêu (Groom không tự tạo việc):
-    {"HorseID": 1, "GroomID": 7, "TaskType": "Ice Leg Soak", "ScheduledAt": "2026-10-12T15:00:00", "Note": ""}"""
+    """
+    Việc phát sinh ngoài chỉ tiêu (Groom không tự tạo việc; người giao không chọn Groom):
+      Vet:     {"HorseID": 1, "TaskType": "Medical Care", "ScheduledAt": "2026-10-12T15:00:00", "Note": "Thay băng"}
+      Trainer: {"HorseID": 1, "TaskType": "Training Care", "ScheduledAt": "...", "Note": "Dắt đi bộ 20 phút"}
+    """
 
     HorseID = serializers.IntegerField(write_only=True)
-    GroomID = serializers.IntegerField(write_only=True, required=False, allow_null=True)
 
     class Meta:
         model = CareTask
-        fields = ["HorseID", "GroomID", "task_type", "scheduled_at", "note"]
+        fields = ["HorseID", "task_type", "scheduled_at", "note"]
+
+
+class CompleteTaskSerializer(serializers.Serializer):
+    Note = serializers.CharField(max_length=1000, required=False, allow_blank=True, allow_null=True)
+    IntakeStatus = serializers.ChoiceField(choices=CareTask.Intake.choices, required=False, allow_null=True)
 
 
 class CareTaskRuleSerializer(DBColumnModelSerializer):

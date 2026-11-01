@@ -1313,6 +1313,7 @@ CREATE TABLE dbo.CareTask
     Note NVARCHAR(1000),
     RuleCode VARCHAR(40) NULL,          -- chỉ tiêu đã sinh ra việc này (NULL = việc giao tay)
     SourceKey VARCHAR(120) NULL,        -- khóa nguồn để không sinh trùng (vd FEEDING_BY_DIET:2026-10-20:15)
+    IntakeStatus VARCHAR(20) NULL,      -- việc cho ăn: Full (ăn hết) / Partial (ăn một phần) / Refused (bỏ ăn)
 
     CONSTRAINT FK_CareTask_Horse FOREIGN KEY (HorseID)
         REFERENCES dbo.Horse(HorseID),
@@ -1322,7 +1323,11 @@ CREATE TABLE dbo.CareTask
         REFERENCES dbo.[User](UserID),
     CONSTRAINT CK_CareTask_Type CHECK
     (
-        TaskType IN ('Feeding', 'Cleaning', 'Bathing', 'Ice Leg Soak')
+        TaskType IN ('Feeding', 'Cleaning', 'Bathing', 'Ice Leg Soak', 'Medical Care', 'Training Care')
+    ),
+    CONSTRAINT CK_CareTask_Intake CHECK
+    (
+        IntakeStatus IS NULL OR (TaskType = 'Feeding' AND IntakeStatus IN ('Full', 'Partial', 'Refused'))
     ),
     CONSTRAINT CK_CareTask_Status CHECK
     (
@@ -2051,6 +2056,7 @@ FROM
     ('VETERINARIAN', 'MEDICAL_SIGN'),
     ('VETERINARIAN', 'TRAINING_LOCK_MANAGE'),
     ('VETERINARIAN', 'DIET_MANAGE'),
+    ('VETERINARIAN', 'INVENTORY_REQUEST'),
     -- Groom
     ('GROOM', 'HORSE_VIEW'),
     ('GROOM', 'CARE_MANAGE'),
