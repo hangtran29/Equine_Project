@@ -32,3 +32,16 @@ def lock_released(lock):
         f"Sau khi tái khám đạt, bác sĩ thú y {lock.released_by.full_name} đã mở khóa huấn luyện cho {_label(horse)}.\n"
         "Ngựa tiếp tục tập theo giáo án; kết quả từng buổi xem trong mục Huấn luyện."
     ))
+
+
+def lock_level_changed(lock, previous_level):
+    horse = lock.horse
+    limit = f" (cường độ tối đa {lock.max_intensity})" if lock.max_intensity is not None else ""
+    send_email(_owner(horse), f"{horse.horse_name}: thay đổi mức hạn chế huấn luyện", (
+        f"Chào {horse.owner.full_name},\n\n"
+        f"Bác sĩ thú y đã điều chỉnh mức hạn chế huấn luyện của {_label(horse)}: "
+        f"từ \"{LEVEL_TEXT.get(previous_level, previous_level)}\" sang "
+        f"\"{LEVEL_TEXT.get(lock.lock_level, lock.lock_level)}\"{limit}.\n"
+        f"Lý do: {lock.reason}\n\n"
+        "Bạn sẽ được báo khi ngựa được tập lại bình thường."
+    ))

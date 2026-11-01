@@ -14,7 +14,7 @@ from apps.core.exceptions import BusinessRuleError
 from apps.core.models import AuditLog
 from apps.horses.models import Horse, RegistrationRequest
 
-from . import owner_emails
+from . import owner_emails, staff_emails
 from .models import (
     HealthReport, HealthReportNote, MedicalRecord, MedicalRecordAmendment, MedicalSchedule, TrainingLock, Treatment,
     Vaccination,
@@ -309,6 +309,7 @@ def create_lock(horse, user, values):
         "HorseID": horse.pk, "LockLevel": lock.lock_level, "CancelledSessionIDs": lock.cancelled_session_ids,
     })
     owner_emails.lock_created(lock)
+    staff_emails.lock_changed(lock, "created")
     return lock
 
 
@@ -321,15 +322,20 @@ def update_lock(lock, user, values):
         **{k: v for k, v in values.items() if k != "lock_start_date" or v is not None},
     }
     _validate_lock(merged)
+    before = (lock.lock_level, lock.max_intensity)
     for attr, value in merged.items():
         setattr(lock, attr, value)
     cancelled = _cancel_sessions_for_lock(lock, user)
     lock.save()
     lock.cancelled_session_ids = cancelled
+    level_changed = before != (lock.lock_level, lock.max_intensity)
     log_action(user, "UPDATE_TRAINING_LOCK", lock, {
-        "LockLevel": lock.lock_level, "MaxIntensity": lock.max_intensity,
-        "CancelledSessionIDs": lock.cancelled_session_ids,
+        "LockLevel": lock.lock_level, "MaxIntensity": lock.max_intensity, "PreviousLockLevel": before[0],
+        "LevelChanged": level_changed, "CancelledSessionIDs": lock.cancelled_session_ids,
     })
+    if level_changed:   # đổi mức khóa / cường độ tối đa -> báo chủ ngựa, Trainer phụ trách, Head Trainer
+        owner_emails.lock_level_changed(lock, before[0])
+        staff_emails.lock_changed(lock, "changed")
     return lock
 
 
@@ -358,6 +364,7 @@ def release_lock(lock, user, note=None):
     lock.save(update_fields=["lock_status", "released_by", "released_at", "lock_end_date", "details"])
     log_action(user, "RELEASE_TRAINING_LOCK", lock, {"FollowUpMedicalRecordID": follow_up.id})
     owner_emails.lock_released(lock)
+    staff_emails.lock_changed(lock, "released")
     return lock
 
 
@@ -458,6 +465,8 @@ def create_health_report(horse, user, values):
     log_action(user, "REPORT_HEALTH_ISSUE", report, {
         "HorseID": horse.pk, "Severity": report.severity, "StoppedSession": stopped,
     })
+    if report.severity == HealthReport.Severity.URGENT:   # email ngay cho bác sĩ đang trực
+        staff_emails.urgent_report(report)
     return report
 
 

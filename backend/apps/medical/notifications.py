@@ -38,6 +38,10 @@ def medical_items(user, make_item):
     if "TRAINING_PLAN_MANAGE" in perms and flows.has_training():  # Trainer: báo cáo về ngựa mình phụ trách
         items += _health_reports(user, make_item, {"horse__trainer_assignments__trainer": user,
                                                    "horse__trainer_assignments__status": "Active"})
+    if flows.has_training() and ("TRAINING_PLAN_APPROVE" in perms or "TRAINING_PLAN_MANAGE" in perms):
+        items += _lock_events(user, make_item, today)
+    if "OWNER_VIEW" in perms:  # chủ ngựa: Vet đổi mức khóa (7 ngày)
+        items += _lock_events(user, make_item, today, owner=True)
     if "OWNER_VIEW" in perms:  # Chủ ngựa: ngựa mình đang bị khóa tập / vừa được mở khóa (7 ngày)
         for lock in TrainingLock.objects.filter(horse__owner=user, lock_status="Active").select_related("horse"):
             items.append(make_item("OWNER_TRAINING_LOCKED", f"Ngựa tạm dừng huấn luyện ({lock.lock_level})",
@@ -46,4 +50,46 @@ def medical_items(user, make_item):
                                                 released_at__date__gte=today - timedelta(days=7)).select_related("horse"):
             items.append(make_item("OWNER_TRAINING_UNLOCKED", "Ngựa được tập lại", "TrainingLock", lock.id, lock.horse,
                                    lock.released_at))
+    return items
+
+
+LOCK_EVENTS = {
+    "CREATE_TRAINING_LOCK": ("TRAINING_LOCKED", "Vet khóa tập ({level}): xem lại giáo án", True),
+    "UPDATE_TRAINING_LOCK": ("TRAINING_LOCK_CHANGED", "Vet đổi mức khóa tập sang {level}: xem lại giáo án", True),
+    "RELEASE_TRAINING_LOCK": ("TRAINING_UNLOCKED", "Ngựa được tập lại: xem lại lịch tập", False),
+}
+
+
+def _lock_events(user, make_item, today, owner=False):
+    """
+    Head Trainer (mọi ngựa) và Trainer (ngựa mình phụ trách): Vet khóa / đổi mức khóa / mở khóa trong 7 ngày qua,
+    kèm nhắc xem lại giáo án. Chủ ngựa (owner=True): chỉ sự kiện đổi mức khóa (khóa / mở khóa đã có thông báo riêng).
+    """
+    import json
+
+    from apps.core.models import AuditLog
+
+    perms = user.permission_codes
+    locks = TrainingLock.objects.filter(horse__club_id=user.club_id) if not owner else \
+        TrainingLock.objects.filter(horse__owner=user)
+    if not owner and "TRAINING_PLAN_APPROVE" not in perms:   # Trainer: chỉ ngựa đang phụ trách
+        locks = locks.filter(horse__trainer_assignments__trainer=user, horse__trainer_assignments__status="Active")
+    locks = {lock.id: lock for lock in locks.select_related("horse").distinct()}
+    actions = ["UPDATE_TRAINING_LOCK"] if owner else list(LOCK_EVENTS)
+    items = []
+    for log in AuditLog.objects.filter(entity_name=TrainingLock._meta.db_table, entity_id__in=list(locks),
+                                       action_type__in=actions,
+                                       action_time__date__gte=today - timedelta(days=7)).order_by("action_time"):
+        lock = locks[log.entity_id]
+        try:
+            details = json.loads(log.details or "{}")
+        except (TypeError, ValueError):
+            details = {}
+        if log.action_type == "UPDATE_TRAINING_LOCK" and not details.get("LevelChanged"):
+            continue
+        kind, title, urgent = LOCK_EVENTS[log.action_type]
+        if owner:
+            kind, title = "OWNER_TRAINING_LOCK_CHANGED", "Vet đổi mức hạn chế huấn luyện ({level})"
+        items.append(make_item(kind, title.format(level=details.get("LockLevel") or lock.lock_level), "TrainingLock",
+                               lock.id, lock.horse, log.action_time, urgent, lock.reason))
     return items
