@@ -125,15 +125,15 @@ try {
   await click(`[data-injury-record="${recordId}"]`)
   assert.equal(await location(), payload.InjuryLocation)
   assert.deepEqual(await selection(), [], 'legacy prose is not guessed into diagram regions')
-  assert.equal(await evaluate(`document.querySelectorAll('.injury-horse-svg > image').length`), 1)
-  assert.equal(await evaluate(`document.querySelectorAll('.injury-body-region').length`), bodyRegions.length)
+  assert.equal(await evaluate(`document.querySelectorAll('.injury-region-editor .injury-horse-svg > image').length`), 1)
+  assert.equal(await evaluate(`document.querySelectorAll('.injury-region-editor .injury-body-region').length`), bodyRegions.length)
   const initialLocal = await evaluate(`JSON.stringify(Object.fromEntries(Object.entries(localStorage).filter(([k])=>!k.includes('token'))))`)
 
   // Both views retain the photo and reflect photo, mask and paths together.
   // Real pointer events must select the anatomical side currently displayed.
   for (const view of ['left', 'right']) {
     await side(view === 'right')
-    assert.equal(await evaluate(`document.querySelectorAll('.injury-horse-svg > image').length`),1,`${view} photo visible`)
+    assert.equal(await evaluate(`document.querySelectorAll('.injury-region-editor .injury-horse-svg > image').length`),1,`${view} photo visible`)
     const transforms = await evaluate(`(() => { const image = document.querySelector('.injury-horse-svg > image'); const path = document.querySelector('[data-region=head]'); return {image:image.getCTM().a,region:path.getCTM().a} })()`)
     assert.equal(Math.sign(transforms.image),view==='right'?-1:1,`${view} photo orientation`)
     assert.equal(Math.sign(transforms.region),Math.sign(transforms.image),`${view} paths match photo orientation`)
@@ -171,7 +171,7 @@ try {
   const beforeRightView = await location()
   await side(true)
   assert.equal(await location(),beforeRightView,'changing views preserves anatomy and body-side labels')
-  assert.equal(await evaluate(`document.querySelectorAll('.injury-body-region').length`), bodyRegions.length, 'right view has interactive regions')
+  assert.equal(await evaluate(`document.querySelectorAll('.injury-region-editor .injury-body-region').length`), bodyRegions.length, 'right view has interactive regions')
   assert.equal(await evaluate(`document.querySelector('[data-region=head]').getAttribute('aria-pressed')`),'false','left head does not highlight the right head')
   await evaluate(`document.querySelector('[data-region=head]').focus()`)
   await cdp('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13})

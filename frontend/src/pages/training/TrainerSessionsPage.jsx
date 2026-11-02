@@ -410,18 +410,14 @@ export default function TrainerSessionsPage() {
     setMessage('')
 
     try {
-      /*
-       * Phase 10 Flow 2 chỉ gửi Reason.
-       *
-       * Không gửi ReportHealth / Severity /
-       * Description vì đó thuộc Flow 3.
-       */
       await stopTrainingSession(
         stopTarget
           .TrainingSessionID,
         {
-          Reason:
-            reason,
+          Reason: reason,
+          ReportHealth: true,
+          Severity: 'Urgent',
+          Description: reason,
         },
       )
 
@@ -444,7 +440,7 @@ export default function TrainerSessionsPage() {
       )
 
       setMessage(
-        `Đã dừng buổi tập của ${horseName}.`,
+        `Đã dừng tập và gửi báo cáo sự cố của ${horseName} cho Vet.`,
       )
     } catch (
       actionError
@@ -1211,7 +1207,7 @@ export default function TrainerSessionsPage() {
                             )
                           }
                         >
-                          Dừng buổi tập
+                          Dừng tập và báo sự cố
                         </button>
                       )}
 
@@ -1306,7 +1302,7 @@ export default function TrainerSessionsPage() {
             </span>
 
             <h2 id="trainer-stop-title">
-              Dừng buổi tập?
+              Dừng tập và báo sự cố
             </h2>
 
             <p>

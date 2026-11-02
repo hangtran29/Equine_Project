@@ -32,6 +32,7 @@ export function DietContextPanel({ context }) {
     </div>
     {lock && <p className="care-lock">Đang bị Vet khóa tập ({lock.LockLevel === 'Full' ? 'khóa toàn bộ' : 'giới hạn cường độ'}){lock.Reason ? `: ${lock.Reason}` : ''}.</p>}
     {context.Notes?.length > 0 && <ul className="care-notes">{context.Notes.map(note => <li key={note}>{note}</li>)}</ul>}
+    {context.DietRestrictions?.length > 0 && <div className="care-vet-note"><h3>Chỉ định dinh dưỡng của Vet</h3>{context.DietRestrictions.map(r => <p key={r.VetDietRestrictionID}><strong>{r.Instructions}</strong> · {r.CreatedByName} · {fmtDate(r.StartDate)} → {r.EndDate ? fmtDate(r.EndDate) : 'Chưa định ngày kết thúc'}{r.FeedType && (r.MaxDailyQuantity == null ? ` · Không dùng ${r.FeedType}` : ` · ${r.FeedType}: tối đa ${r.MaxDailyQuantity} ${r.Unit}/ngày`)}</p>)}</div>}
   </section>
 }
 

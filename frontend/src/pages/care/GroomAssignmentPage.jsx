@@ -16,7 +16,7 @@ function Row({ horse, grooms, onSaved }) {
   return <tr>
     <td><strong>{horse.HorseName}</strong><small className="care-cell-sub">{horse.HorseCode || '—'}</small></td>
     <td>{horse.groom ? <>{horse.groom.GroomName}<small className="care-cell-sub">từ {fmtDateTime(horse.groom.AssignedAt)}</small></>
-      : <span className="care-muted">Chưa giao – hệ thống chia cho Groom ít việc nhất</span>}</td>
+      : <span className="care-muted">Chưa phân công · việc được giữ để Manager xử lý</span>}</td>
     <td>
       <select aria-label={`Groom phụ trách ${horse.HorseName}`} value={value} onChange={e => setValue(e.target.value)}>
         <option value="">— Không giao cố định —</option>
@@ -43,8 +43,8 @@ export default function GroomAssignmentPage() {
   const { horses = [], grooms = [] } = data.data || {}
   const unassigned = useMemo(() => horses.filter(h => !h.groom).length, [horses])
 
-  return <CarePage crumb="Groom phụ trách" eyebrow="HUẤN LUYỆN VIÊN TRƯỞNG" title="Groom phụ trách ngựa"
-    description="Mỗi ngựa nên có một Groom phụ trách cố định để quen ngựa. Khi đổi Groom, các việc tự sinh chưa làm (từ giờ trở đi) chuyển sang Groom mới.">
+  return <CarePage crumb="Groom phụ trách" eyebrow="QUẢN LÝ" title="Groom phụ trách ngựa"
+    description="Manager phân công Groom cho từng ngựa. Khi đổi người, mọi việc chưa hoàn thành được chuyển cho Groom mới; lịch sử việc đã làm được giữ nguyên.">
     <section className="care-stats">
       <article><span>Ngựa đã tiếp nhận</span><strong>{horses.length}</strong></article>
       <article className={unassigned ? 'care-stat-alert' : ''}><span>Chưa có Groom cố định</span><strong>{unassigned}</strong></article>

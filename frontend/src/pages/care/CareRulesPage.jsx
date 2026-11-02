@@ -40,7 +40,7 @@ function RuleCard({ rule, onSaved }) {
         <input type="number" min="0" max="240" required value={form.OffsetMinutes}
           onChange={e => setForm(f => ({ ...f, OffsetMinutes: e.target.value }))} />
         <FieldError fields={action.fields} name="OffsetMinutes" /></label>}
-      {rule.RuleCode === 'FEEDING_BY_DIET' && <p className="care-muted care-span-2">Giờ cho ăn lấy theo từng bữa trong khẩu phần đã được Vet duyệt.</p>}
+      {rule.RuleCode === 'FEEDING_BY_DIET' && <p className="care-muted care-span-2">Giờ cho ăn lấy theo từng bữa trong khẩu phần đã được Head Trainer chốt.</p>}
     </div>
     <Notice state={action} />
     <footer>
@@ -53,10 +53,10 @@ function RuleCard({ rule, onSaved }) {
 export default function CareRulesPage() {
   const rules = useLoad(getCareRules, [])
   return <CarePage crumb="Chỉ tiêu chăm sóc" eyebrow="HUẤN LUYỆN VIÊN TRƯỞNG" title="Chỉ tiêu chăm sóc hằng ngày"
-    description="Groom không tự tạo việc. Mỗi ngày hệ thống sinh việc cho Groom theo các chỉ tiêu dưới đây; tắt một chỉ tiêu thì các việc chưa làm của chỉ tiêu đó bị gỡ.">
+    description="Hệ thống sinh việc theo chỉ tiêu. Khi nguồn thay đổi, việc tự sinh chưa làm và chưa tới giờ được cập nhật hoặc đánh dấu bỏ qua, giữ lịch sử. Chỉ định y tế do Vet quản lý riêng.">
     <Loading state={rules} isEmpty={!rules.data?.length}>
       <div className="care-rule-grid">
-        {(rules.data || []).map(rule => <RuleCard key={rule.CareTaskRuleID} rule={rule} onSaved={rules.reload} />)}
+        {(rules.data || []).filter(rule => rule.RuleCode !== 'ICE_SOAK_WHEN_LOCKED').map(rule => <RuleCard key={rule.CareTaskRuleID} rule={rule} onSaved={rules.reload} />)}
       </div>
     </Loading>
   </CarePage>

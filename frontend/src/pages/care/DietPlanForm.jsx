@@ -22,7 +22,7 @@ export default function DietPlanForm({ mode, plan, copyFrom, horseName, save, on
   const action = useSubmit()
   const set = key => event => setForm(f => ({ ...f, [key]: event.target.value }))
   const title = mode === 'create' ? `Lập khẩu phần mới cho ${horseName}`
-    : mode === 'edit' ? 'Sửa khẩu phần rồi gửi Vet duyệt lại' : 'Vet điều chỉnh khẩu phần đang áp dụng'
+    : mode === 'edit' ? 'Sửa khẩu phần theo góp ý của Vet' : 'Điều chỉnh khẩu phần'
 
   async function submit(event) {
     event.preventDefault()
@@ -33,13 +33,13 @@ export default function DietPlanForm({ mode, plan, copyFrom, horseName, save, on
     } else {
       body.VetNote = form.VetNote.trim()
     }
-    const result = await action.run(() => save(body), mode === 'adjust' ? 'Đã điều chỉnh khẩu phần.' : 'Đã gửi Vet duyệt.')
+    const result = await action.run(() => save(body), 'Đã lưu khẩu phần, chờ Head Trainer chốt.')
     if (result) onSaved(result)
   }
 
   return <form className="panel care-form" onSubmit={submit}>
     <h2>{title}</h2>
-    {mode !== 'adjust' && <p className="care-muted">Khẩu phần mới ở trạng thái <b>Chờ Vet duyệt</b>. Vet duyệt xong hệ thống mới tự giao việc cho ăn cho Groom.
+    {mode !== 'adjust' && <p className="care-muted">Khẩu phần mới ở trạng thái <b>Chờ chốt</b>. Sau khi Head Trainer chốt và hệ thống kiểm tra hạn chế y tế, các bữa được dùng để giao việc cho Groom.
       {copyFrom && ' Các bữa ăn được chép sẵn từ khẩu phần đang áp dụng, sửa lại cho phù hợp giai đoạn tập.'}</p>}
     <div className="care-form-grid">
       {mode !== 'adjust' && <label className="form-field care-span-2"><span>Mô tả khẩu phần</span>
@@ -62,7 +62,7 @@ export default function DietPlanForm({ mode, plan, copyFrom, horseName, save, on
     <Notice state={{ ...action, notice: '' }} />
     <div className="care-actions">
       <button className="button" type="submit" disabled={action.busy}>
-        {action.busy ? 'Đang lưu…' : mode === 'adjust' ? 'Lưu điều chỉnh' : 'Gửi Vet duyệt'}</button>
+        {action.busy ? 'Đang lưu…' : 'Lưu khẩu phần chờ chốt'}</button>
       <button className="button button-secondary" type="button" disabled={action.busy} onClick={onCancel}>Hủy</button>
     </div>
   </form>

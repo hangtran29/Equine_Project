@@ -7,6 +7,8 @@ import DietPlansPage from './DietPlansPage.jsx'
 import GroomAssignmentPage from './GroomAssignmentPage.jsx'
 import HorseDietsPage from './HorseDietsPage.jsx'
 import SupplyRequestsPage from './SupplyRequestsPage.jsx'
+import InventoryPage from '../manager/InventoryPage.jsx'
+import VetDutyPage from '../manager/VetDutyPage.jsx'
 import './Care.css'
 
 // [đường dẫn, tên menu, icon (NavIcon của App.jsx), role được dùng, quyền cần có]
@@ -14,10 +16,12 @@ const PAGES = [
   ['/care/today', 'Việc chăm sóc hôm nay', 'schedule', ['groom'], 'CARE_MANAGE'],
   ['/care/diets', 'Khẩu phần ngựa', 'plan', ['groom'], 'CARE_MANAGE'],
   ['/care/diet-plans', 'Khẩu phần ăn', 'plan', ['headTrainer'], 'DIET_MANAGE'],
-  ['/care/tasks', 'Việc chăm sóc', 'schedule', ['headTrainer'], 'TRAINER_ASSIGN'],
-  ['/care/grooms', 'Groom phụ trách', 'staff', ['headTrainer'], 'TRAINER_ASSIGN'],
+  ['/care/tasks', 'Việc chăm sóc', 'schedule', ['headTrainer', 'manager', 'trainer', 'vet'], 'HORSE_VIEW'],
+  ['/care/grooms', 'Groom phụ trách', 'staff', ['manager'], 'CLUB_MANAGE'],
   ['/care/rules', 'Chỉ tiêu chăm sóc', 'edit', ['headTrainer'], 'TRAINER_ASSIGN'],
-  ['/care/diet-approvals', 'Duyệt khẩu phần', 'approval', ['vet'], 'DIET_MANAGE'],
+  ['/care/diet-approvals', 'Góp ý dinh dưỡng', 'approval', ['vet'], 'DIET_MANAGE'],
+  ['/care/inventory', 'Kho và cấp vật tư', 'requests', ['manager'], 'INVENTORY_MANAGE'],
+  ['/manager/vet-duty', 'Lịch trực Vet', 'schedule', ['manager'], 'CLUB_MANAGE'],
   ['/care/supplies', 'Xin vật tư', 'requests', ['groom', 'headTrainer'], 'INVENTORY_REQUEST'],
 ]
 
@@ -46,6 +50,8 @@ export function careRoutes({ role, currentUser, home }) {
     '/care/rules': <CareRulesPage />,
     '/care/diet-approvals': <DietApprovalPage />,
     '/care/supplies': <SupplyRequestsPage />,
+    '/care/inventory': <InventoryPage />,
+    '/manager/vet-duty': <VetDutyPage />,
   }
   const noAccess = <main className="page-content narrow-content"><section className="panel">
     <h1>Chưa được cấp quyền</h1><p>Tài khoản của bạn chưa có quyền dùng trang này. Liên hệ Quản lý câu lạc bộ.</p></section></main>
