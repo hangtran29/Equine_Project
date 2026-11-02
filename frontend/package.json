@@ -11,6 +11,7 @@
     "test:api": "node --test tests/api.test.mjs",
     "test:injury": "node --test tests/injury.test.mjs tests/injuryDiagram.test.mjs tests/injuryLocation.test.mjs",
     "test:injury:browser": "node tests/injury.browser.mjs",
+    "test:workflows:browser": "node tests/workflows.browser.mjs",
     "test:training-status": "node --test tests/effectiveTraining.test.mjs",
     "preview": "vite preview"
   },

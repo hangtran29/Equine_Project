@@ -24,7 +24,7 @@ export function Badge({ map, value }) {
 
 export function Notice({ state }) {
   return <>
-    {state.error && !Object.keys(state.fields || {}).length && <div className="alert-banner" role="alert">{state.error}</div>}
+    {state.error && <div className="alert-banner" role="alert">{state.error}</div>}
     {state.notice && <div className="success-message" role="status">{state.notice}</div>}
   </>
 }

@@ -79,7 +79,6 @@ import { vetError } from './pages/vet/vetDomain.js'
 import VetLoading from './pages/vet/VetLoading.jsx'
 import { ClinicalNavigationGuard, hasUnsavedClinicalChanges } from './pages/vet/useClinicalWarning.js'
 import NotificationsPage from './pages/vet/NotificationsPage.jsx'
-import InventoryPage from './pages/manager/InventoryPage.jsx'
 import ManagerReports from './pages/manager/ManagerReports.jsx'
 import AuditPage from './pages/manager/AuditPage.jsx'
 
@@ -104,6 +103,7 @@ import TrainingSchedulePage from './pages/training/TrainingSchedulePage.jsx'
 import TrainingSessionCreatePage from './pages/training/TrainingSessionCreatePage.jsx'
 import TrainingSessionEditPage from './pages/training/TrainingSessionEditPage.jsx'
 import { careHome, careNavItems, careRoutes } from './pages/care/careRoutes.jsx'
+import HealthReportsPage from './pages/HealthReportsPage.jsx'
 
 import HorseProfile from './components/horse/HorseProfile.jsx'
 import {
@@ -1993,6 +1993,7 @@ function AppContent() {
           )}
 
           {/* Flow 4 – chăm sóc, dinh dưỡng (menu khai báo trong pages/care/careRoutes.jsx) */}
+          {currentUser.permissions.includes('HEALTH_REPORT') && ['groom', 'workRider', 'trainer', 'headTrainer'].includes(role) && <NavLink to="/health-reports" title="Báo sức khỏe"><NavIcon kind="health" /><span>Báo sức khỏe</span></NavLink>}
           {careNavItems(role, currentUser.permissions).length > 0 && role !== 'groom' && (
             <p className="sidebar-label">CHĂM SÓC &amp; DINH DƯỠNG</p>
           )}
@@ -2880,6 +2881,7 @@ function AppContent() {
 />
 
             {careRoutes({ role, currentUser, home })}
+            <Route path="/health-reports" element={currentUser.permissions.includes('HEALTH_REPORT') && ['groom', 'workRider', 'trainer', 'headTrainer'].includes(role) ? <HealthReportsPage /> : <Navigate to={home} replace />} />
 
             <Route
               path="*"

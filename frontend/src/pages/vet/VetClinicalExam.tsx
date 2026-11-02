@@ -8,7 +8,7 @@ import HorseAvatar from '../../components/horse/HorseAvatar.jsx';
 import { formatHorseCode } from '../../components/horse/horseDisplay.js';
 import { formatHorseGender } from '../../components/horse/horseLabels.js';
 import { useResource } from '../../components/common/useOperations.js';
-import { clubDateTimeInput, clubToday, examLabels, healthLabels, latestSigned, recordHealthLabels, trainingLabels, vetAge, vetDate, vetDateTime, vetError } from './vetDomain.js';
+import { clubDateTimeInput, clubToday, clubTimezone, examLabels, healthLabels, latestSigned, recordHealthLabels, trainingLabels, vetAge, vetDate, vetDateTime, vetError } from './vetDomain.js';
 import { TrainingLocks } from './VetOperations.jsx';
 import { useVetResource } from './useVetResource.js';
 import VetPrescription, { PrescriptionSummary } from './VetPrescription.jsx';
@@ -37,7 +37,7 @@ interface ReportRow { HorseID: string | number; VetID?: string | number; Medical
 function canonicalTime(value: string) { const local = clubDateTimeInput(value); return local.length === 16 ? local + ':00' : local; }
 function initial(draft: MedicalRecord | undefined, horse: Horse, reportId?: string): ExaminationInput {
   return { examType: draft?.examType || (horse.profileStatus === 'PENDING_EXAM' ? 'Initial Exam' : ''),
-    healthReportId: reportId, trainingSessionId: draft?.trainingSessionId, examDate: clubDateTimeInput(draft?.examDate),
+    healthReportId: reportId, followUpLockId: draft?.followUpLockId || '', trainingSessionId: draft?.trainingSessionId, examDate: clubDateTimeInput(draft?.examDate),
     weightKg: draft?.weightKg, heightCm: draft?.heightCm, symptoms: draft?.symptoms || '', diagnosis: draft?.diagnosis || '',
     treatmentPlan: draft?.treatmentPlan || '', conclusion: draft?.conclusion || '', healthStatus: draft?.healthStatus || '', trainingEligibility: draft?.trainingEligibility || '',
     restrictionNote: draft?.restrictionNote || '', followUpDate: draft?.followUpDate || '', injuryLocation: draft?.injuryLocation || '', note: draft?.note || '' };
@@ -63,6 +63,7 @@ export default function VetClinicalExam({ horse, currentUser, records = [], draf
   const root = useRef<HTMLElement>(null);
   const allowLeave = useClinicalWarning(!signed && (busy || JSON.stringify(form) !== savedSnapshot || drugDirty));
   const reportData = useResource(healthReportId ? '/health-reports/' + encodeURIComponent(healthReportId) : null);
+  const locks = useVetResource('/training-locks?HorseID=' + encodeURIComponent(horse.id) + '&LockStatus=Active');
   const treatments = useVetResource('/horses/' + encodeURIComponent(horse.id) + '/treatments');
   const isInitial = (signed?.examType || form.examType) === 'Initial Exam';
   const profile = '/vet/horses/' + horse.id;
@@ -191,12 +192,18 @@ export default function VetClinicalExam({ horse, currentUser, records = [], draf
             {report && <blockquote className="vet-source-note">{report.Description}<small>{report.ReportedByName} · {vetDateTime(report.ReportedAt)}{report.TrainingSessionID ? ' · Buổi tập #' + report.TrainingSessionID : ''}</small></blockquote>}
             {!report && form.trainingSessionId && <p>Buổi tập liên quan: #{form.trainingSessionId}</p>}
             {isInitial ? <p><strong>Khám đầu vào</strong> · Gắn với đúng hồ sơ tiếp nhận.</p> : control('examType', 'text', undefined, Object.fromEntries(Object.entries(examLabels).filter(([k]) => k !== 'Initial Exam')))}
-            {control('examDate', 'datetime-local')}<small>Ngày giờ tại câu lạc bộ (UTC+07:00).</small>
+            {control('examDate', 'datetime-local')}<small>Ngày giờ tại câu lạc bộ ({clubTimezone}).</small>
           </section>
           <section className="panel" id="exam-findings"><p className="eyebrow">02 · KIỂM TRA</p><h2>Triệu chứng và kết quả kiểm tra</h2>{control('symptoms', 'textarea', 1500)}<div className="horse-form-grid">{control('weightKg', 'number')}{control('heightCm', 'number')}</div>{control('note', 'textarea', 1500)}</section>
           <section className="panel" id="exam-diagnosis"><p className="eyebrow">03 · CHẨN ĐOÁN</p><h2>Chẩn đoán và chấn thương</h2>{control('diagnosis', 'textarea', 1500)}<HorseInjuryRegionPicker value={form.injuryLocation || ''} onChange={(value: string) => change('injuryLocation', value)} disabled={busy || uncertain} inputId="clinical-injuryLocation" error={fieldErrors.injuryLocation || ''} /><p className="vet-caption">Ghi rõ vùng và bên bị ảnh hưởng. Vùng chọn được lưu cùng phiếu khám dưới dạng mô tả vị trí.</p></section>
           <section className="panel" id="exam-prescription"><p className="eyebrow">04 · ĐIỀU TRỊ</p><h2>Phác đồ và đơn thuốc</h2>{control('treatmentPlan', 'textarea', 3000)}<VetPrescription key={record?.id || 'unsaved'} recordId={record?.id} canEdit onDirtyChange={setDrugDirty} disabled={busy || uncertain} /></section>
-          <section className="panel" id="exam-conclusion"><p className="eyebrow">05 · KẾT LUẬN</p><h2>Kết luận và tái khám</h2>{control('conclusion', 'textarea', 1500)}<div className="horse-form-grid">{control('healthStatus', 'text', undefined, recordHealthLabels)}{control('trainingEligibility', 'text', undefined, trainingLabels)}</div>{control('restrictionNote', 'textarea', 1000)}{control('followUpDate', 'date')}<p className="vet-caption">Đây là ngày chỉ định tái khám. Đặt lịch trong mục Lịch y tế để ghi nhận lịch hẹn trong hệ thống.</p></section>
+          <section className="panel" id="exam-conclusion">
+            <p className="eyebrow">05 · KẾT LUẬN</p><h2>Kết luận và tái khám</h2>{control('conclusion', 'textarea', 1500)}
+            <div className="horse-form-grid">{control('healthStatus', 'text', undefined, recordHealthLabels)}{control('trainingEligibility', 'text', undefined, trainingLabels)}</div>
+            {control('restrictionNote', 'textarea', 1000)}{control('followUpDate', 'date')}
+            {form.examType === 'Follow-up' && <label className="form-field"><span>Đợt khóa được tái khám</span><select id="clinical-followUpLockId" name="FollowUpLockID" form="vet-clinical-form" value={form.followUpLockId || ''} disabled={busy || locks.loading || !!locks.error} onChange={e => change('followUpLockId', e.target.value)}><option value="">Không liên quan đợt khóa</option>{(locks.rows as { TrainingLockID: number; Reason: string }[]).map(lock => <option key={String(lock.TrainingLockID)} value={String(lock.TrainingLockID)}>#{String(lock.TrainingLockID)} · {String(lock.Reason)}</option>)}</select></label>}
+            <p className="vet-caption">Khi ký phiếu, hệ thống ghi lịch tái khám tương ứng. Đặt khóa Restricted và tải tối đa trước khi ký kết luận hạn chế tập.</p>
+          </section>
         </> : <section className="panel vet-review" id="exam-review" tabIndex={-1}><p className="eyebrow">KIỂM TRA TRƯỚC KHI CHỐT</p><h2>Xác nhận bệnh án</h2><p>Đối chiếu nội dung khám và đơn thuốc. Bệnh án đã chốt được giữ nguyên; sửa nội dung bằng đính chính.</p><dl className="vet-details">{[
           ['Loại khám', examLabels[form.examType as keyof typeof examLabels]], ['Ngày giờ khám', vetDateTime(form.examDate)], ['Triệu chứng', form.symptoms], ['Chẩn đoán', form.diagnosis], ['Vị trí chấn thương', form.injuryLocation], ['Hướng điều trị', form.treatmentPlan], ['Kết luận', form.conclusion], ['Sức khỏe', recordHealthLabels[form.healthStatus as keyof typeof recordHealthLabels]], ['Điều kiện tập', trainingLabels[form.trainingEligibility as keyof typeof trainingLabels]], ['Hạn chế cụ thể', form.restrictionNote], ['Chỉ định tái khám', vetDate(form.followUpDate)],
         ].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value || 'Chưa ghi nhận'}</dd></div>)}</dl><h3>Đơn thuốc đã lưu</h3><PrescriptionSummary rows={reviewDrugs || []} /><div className="vet-source-note">{isInitial ? 'Sau khi chốt, quản lý đối chiếu kết quả để quyết định tiếp nhận.' : form.trainingEligibility === 'Not Eligible' ? 'Kết luận không được tập sẽ tạo khóa toàn bộ hoặc nâng khóa hiện hành lên toàn bộ.' : form.trainingEligibility === 'Restricted' ? 'Kết luận hạn chế được lưu trong bệnh án. Để áp dụng giới hạn tải tập, cần lập hoặc điều chỉnh lệnh khóa riêng.' : 'Kết luận cho phép tập không tự mở lệnh khóa đang hoạt động.'}</div><button className="button button-secondary" type="button" disabled={busy} onClick={() => setReview(false)}>Quay lại chỉnh nội dung</button></section>}

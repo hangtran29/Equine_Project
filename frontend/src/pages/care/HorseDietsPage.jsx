@@ -18,7 +18,7 @@ export default function HorseDietsPage({ currentUser }) {
   const rows = useMemo(() => (onlyMine ? mine : data.data || []), [onlyMine, mine, data.data])
 
   return <CarePage crumb="Khẩu phần ngựa" eyebrow="GROOM" title="Khẩu phần ăn của ngựa"
-    description="Khẩu phần do Head Trainer lập theo giai đoạn tập và đã được Vet duyệt. Việc cho ăn trong danh sách việc của bạn được tạo theo đúng các bữa dưới đây.">
+    description="Khẩu phần do Head Trainer lập và chốt theo giai đoạn tập, tuân thủ chỉ định Vet. Việc cho ăn trong danh sách việc của bạn được tạo theo các bữa dưới đây.">
     <section className="filter-card care-toolbar">
       <label className="care-check"><input type="checkbox" checked={onlyMine} onChange={e => setOnlyMine(e.target.checked)} />
         Chỉ ngựa tôi phụ trách ({mine.length})</label>

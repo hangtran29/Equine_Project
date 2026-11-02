@@ -47,12 +47,12 @@ export const adjustDietPlan = (planId: number | string, body: Row) => apiPost<Ro
 // ---------- Việc chăm sóc ----------
 export async function getCareTasks(params: {
   Date?: string; From?: string; To?: string; HorseID?: number | string; GroomID?: number | string;
-  Status?: string; mine?: boolean;
+  Status?: string; mine?: boolean; TaskType?: string; Unassigned?: boolean;
 } = {}): Promise<Row[]> {
   return getCompleteVetList(`/care-tasks${query({ ...params, mine: params.mine ? 1 : undefined })}`);
 }
-export const completeCareTask = (taskId: number | string, note: string) =>
-  apiPost<Row>(`/care-tasks/${taskId}/complete`, note ? { Note: note } : {});
+export const completeCareTask = (taskId: number | string, note: string, feedingOutcome?: string) =>
+  apiPost<Row>(`/care-tasks/${taskId}/complete`, { Note: note, ...(feedingOutcome ? { FeedingOutcome: feedingOutcome } : {}) });
 export const skipCareTask = (taskId: number | string, reason: string) =>
   apiPost<Row>(`/care-tasks/${taskId}/skip`, { Reason: reason });
 export const createCareTask = (body: Row) => apiPost<Row>('/care-tasks', body);

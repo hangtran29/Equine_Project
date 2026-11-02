@@ -13,6 +13,10 @@ const fieldLabels: Record<string, string> = {
   StallID: 'Ô chuồng', Reason: 'Lý do', ManagerNote: 'Ghi chú quản lý', ReviewNote: 'Nhận xét',
   MedicineName: 'Tên thuốc', Dose: 'Liều dùng', Route: 'Đường dùng', StartDate: 'Ngày bắt đầu',
   EndDate: 'Ngày kết thúc', WithdrawalUntil: 'Ngưng thuốc đến', Note: 'Ghi chú',
+  AttachmentIDs: 'Ảnh đính kèm', FeedingOutcome: 'Tình trạng ăn', FollowUpLockID: 'Đợt khóa tái khám',
+  MedicalRecordID: 'Phiếu khám', TrainingLockID: 'Đợt khóa', Instructions: 'Hướng dẫn',
+  FeedType: 'Loại thức ăn', MaxDailyQuantity: 'Lượng tối đa mỗi ngày', Unit: 'Đơn vị',
+  medicalRecordId: 'Phiếu khám', bodyRegion: 'Vùng cơ thể', bodySide: 'Bên cơ thể', detectedAt: 'Ngày phát hiện',
 };
 
 export class ApiError extends Error {

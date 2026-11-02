@@ -1,9 +1,9 @@
 // Head Trainer: lập khẩu phần theo giai đoạn tập của từng ngựa, theo dõi Vet duyệt / trả về.
 import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { createDietPlan, getApprovedHorses, getDietContext, getHorseDietPlans, updateDietPlan } from '../../api/careApi.ts'
-import { Badge, CarePage, Loading } from './careShared.jsx'
-import { DIET_STATUS, useLoad } from './careUtils.js'
+import { approveDietPlan, createDietPlan, getApprovedHorses, getDietContext, getHorseDietPlans, updateDietPlan } from '../../api/careApi.ts'
+import { Badge, CarePage, Loading, Notice } from './careShared.jsx'
+import { DIET_STATUS, useLoad, useSubmit } from './careUtils.js'
 import { DietContextPanel, DietPlanCard } from './dietShared.jsx'
 import DietPlanForm from './DietPlanForm.jsx'
 
@@ -19,6 +19,7 @@ export default function DietPlansPage() {
   const horseId = params.get('HorseID') || ''
   const [form, setForm] = useState(null)   // {mode, plan?, copyFrom?}
   const [message, setMessage] = useState('')
+  const decision = useSubmit()
 
   const horses = useLoad(async () => {
     const rows = await getApprovedHorses()
@@ -44,7 +45,7 @@ export default function DietPlansPage() {
   }
 
   return <CarePage crumb="Khẩu phần ăn" eyebrow="HUẤN LUYỆN VIÊN TRƯỞNG" title="Khẩu phần ăn theo giai đoạn tập"
-    description="Chọn ngựa để xem giáo án và giai đoạn tập hiện tại, rồi lập khẩu phần phù hợp. Khẩu phần cần Vet duyệt trước khi áp dụng.">
+    description="Lập và chốt khẩu phần theo giáo án, kết quả tập và hạn chế y tế của Vet. Khẩu phần chỉ áp dụng sau khi Head Trainer chốt.">
     <div className="care-split">
       <aside className="panel care-horse-list" aria-label="Danh sách ngựa">
         <h2>Ngựa đã tiếp nhận</h2>
@@ -72,7 +73,7 @@ export default function DietPlansPage() {
           {form ? <DietPlanForm key={`${form.mode}-${form.plan?.DietPlanID || 'new'}`} mode={form.mode} plan={form.plan}
             copyFrom={form.copyFrom} horseName={context?.HorseName}
             save={body => (form.mode === 'create' ? createDietPlan(horseId, body) : updateDietPlan(form.plan.DietPlanID, body))}
-            onSaved={() => saved(form.mode === 'create' ? 'Đã lập khẩu phần, đang chờ Vet duyệt.' : 'Đã sửa và gửi Vet duyệt lại.')}
+            onSaved={() => saved(form.mode === 'create' ? 'Đã lưu khẩu phần nháp, chờ chốt.' : 'Đã lưu thay đổi khẩu phần, chờ chốt.')}
             onCancel={() => setForm(null)} />
             : <div className="care-toolbar-actions">
               {waiting
@@ -89,8 +90,12 @@ export default function DietPlansPage() {
                 {(plan.Status === 'Pending' || plan.Status === 'Rejected') && !form && <div className="care-actions">
                   <button className="button button-secondary" type="button" onClick={() => setForm({ mode: 'edit', plan })}>
                     {plan.Status === 'Rejected' ? 'Sửa theo góp ý của Vet' : 'Sửa khẩu phần'}</button></div>}
+                {plan.Status === 'Pending' && !form && <button type="button" className="button" disabled={decision.busy} onClick={async () => {
+                  if (await decision.run(() => approveDietPlan(plan.DietPlanID, ''), 'Đã chốt khẩu phần và cập nhật công việc cho ăn.')) { detail.reload(); horses.reload() }
+                }}>Chốt và áp dụng khẩu phần</button>}
               </DietPlanCard>)}
             </div>
+            <Notice state={decision} />
           </section>
         </Loading>}
       </div>

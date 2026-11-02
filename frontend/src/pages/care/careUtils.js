@@ -1,11 +1,14 @@
 // Hằng số, định dạng ngày giờ và hook dùng chung cho các trang Flow 4.
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { clubToday } from '../vet/vetDomain.js'
 
 export const TASK_TYPES = {
   Feeding: 'Cho ăn',
   Cleaning: 'Dọn chuồng',
   Bathing: 'Tắm, kiểm tra chân',
   'Ice Leg Soak': 'Ngâm chân nước đá',
+  'Medical Care': 'Chăm sóc y tế',
+  'Training Support': 'Hỗ trợ tập luyện',
 }
 
 export const TASK_STATUS = {
@@ -15,7 +18,7 @@ export const TASK_STATUS = {
 }
 
 export const DIET_STATUS = {
-  Pending: ['Chờ Vet duyệt', 'warning'],
+  Pending: ['Chờ Head Trainer chốt', 'warning'],
   Approved: ['Đang áp dụng', 'success'],
   Adjusted: ['Vet đã điều chỉnh', 'info'],
   Rejected: ['Bị trả về', 'danger'],
@@ -44,13 +47,12 @@ export const RULE_HELP = {
   FEEDING_BY_DIET: 'Mỗi bữa trong khẩu phần đang áp dụng, đúng giờ bữa ăn.',
   DAILY_CLEANING: 'Mỗi ngày cho mọi ngựa đã tiếp nhận, vào giờ đã đặt.',
   BATH_AFTER_TRAINING: 'Sau mỗi buổi tập hoàn thành, cộng thêm số phút đã đặt.',
-  ICE_SOAK_WHEN_LOCKED: 'Mỗi ngày ngựa đang bị Vet khóa tập, vào giờ đã đặt.',
+  ICE_SOAK_WHEN_LOCKED: 'Chỉ tạo theo chỉ định y tế riêng của Vet; khóa tập không tự chỉ định ngâm chân.',
 }
 
 // ---------- ngày giờ (giờ CLB, không đổi sang UTC) ----------
 export function todayText() {
-  const now = new Date()
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  return clubToday()
 }
 
 export function addDays(dateText, days) {

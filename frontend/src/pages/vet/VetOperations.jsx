@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useVetMutation as useMutation } from './useVetMutation.jsx'
-import { clubToday, dueGroup, examLabels, medicalEvents, scheduleTypes, vetDate, vetDateTime } from './vetDomain.js'
+import { clubToday, clubTimezone, dueGroup, examLabels, medicalEvents, scheduleTypes, vetDate, vetDateTime } from './vetDomain.js'
 import { useVetResource } from './useVetResource.js'
 import CalendarEventEditor from './CalendarEventEditor.jsx'
 import VetLoading from './VetLoading.jsx'
 import useClinicalWarning from './useClinicalWarning.js'
 import { Field } from '../../components/common/OperationUI.jsx'
+import { ReportAttachments } from '../HealthReportsPage.jsx'
 
 export function ResourceState({ data, children }) {
   if (data.loading) return <VetLoading label="Đang tải dữ liệu…" />
@@ -73,6 +74,11 @@ export function VetCalendar({ horses, currentUser, horseId }) {
   const [view, setView] = useState('list')
   const action = useMutation(() => { vaccinations.reload(); schedules.reload() })
   const canManage = currentUser.permissions.includes('MEDICAL_MANAGE')
+  const boosters = vaccinations.rows.filter(v => v.Status === 'Completed' && v.NextDueDate
+    && (!eventStatus || eventStatus === 'Scheduled')
+    && (!selectedHorse || String(v.HorseID) === selectedHorse) && (!type || type === 'Vaccination')
+    && (!from || v.NextDueDate >= from) && (!to || v.NextDueDate <= to)
+    && (group === 'all' || group === dueGroup(v.NextDueDate)))
   const rows = medicalEvents(vaccinations.rows, schedules.rows).filter(row => (!type || (type === 'Vaccination' ? row.kind === 'vaccination' : row.ScheduleType === type)) && (!selectedHorse || String(row.HorseID) === selectedHorse) && (!from || row.day >= from) && (!to || row.day <= to) && (!eventStatus || row.Status === eventStatus)).filter(row => group === 'all' || (group === 'completed' ? row.Status === 'Completed' : ['Scheduled', 'Overdue'].includes(row.Status) && (group === 'overdue' ? row.Status === 'Overdue' || dueGroup(row.day) === 'overdue' : row.Status !== 'Overdue' && dueGroup(row.day) === group)))
   async function create(event) {
     event.preventDefault()
@@ -82,7 +88,7 @@ export function VetCalendar({ horses, currentUser, horseId }) {
     if (await action.run(`/horses/${id}/${kind === 'Vaccination' ? 'vaccinations' : 'medical-schedules'}`, body)) setCreating(false)
   }
   return <section className="panel">
-    <h2>Lịch y tế</h2><p>Giờ CLB UTC+07:00. Ngày tiêm nhắc lại được lưu theo chỉ định; không tự tạo chu kỳ hoặc lịch trùng.</p>
+    <h2>Lịch y tế</h2><p>Giờ CLB {clubTimezone}. Ngày tiêm nhắc lại được lưu theo chỉ định; không tự tạo chu kỳ hoặc lịch trùng.</p>
     <div className="vet-toolbar"><label className="form-field"><span>Lọc thời hạn</span><select value={group} onChange={e => { const next = new URLSearchParams(params); next.set('due', e.target.value); setParams(next) }}>{Object.entries({ all: 'Tất cả', overdue: 'Quá hạn', today: 'Hôm nay', upcoming: 'Sắp tới', completed: 'Đã hoàn thành' }).map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label><label className="form-field"><span>Loại công việc</span><select value={type} onChange={e => filterEvent('kind', e.target.value)}><option value="">Tất cả</option><option value="Vaccination">Tiêm phòng</option>{Object.entries(scheduleTypes).map(([v,l]) => <option key={v} value={v}>{l}</option>)}</select></label>
       {!horseId && <label className="form-field"><span>Ngựa</span><select value={selectedHorse} onChange={e => filterEvent('horse', e.target.value)}><option value="">Tất cả ngựa</option>{horses.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}</select></label>}
       <label className="form-field"><span>Trạng thái</span><select value={eventStatus} onChange={e => filterEvent('state', e.target.value)}><option value="">Tất cả trạng thái</option>{Object.entries(statusLabels).map(([v,l]) => <option key={v} value={v}>{l}</option>)}</select></label>
@@ -96,13 +102,14 @@ export function VetCalendar({ horses, currentUser, horseId }) {
       <Field label="Ngày đến hạn" name={kind === 'Vaccination' ? 'VaccinationDate' : 'ScheduledDate'} type="date" required action={action} /><Field label="Ghi chú" name="Note" multiline maxLength={1000} action={action} /><button className="button" disabled={action.busy}>Lưu lịch</button>
     </fieldset></form>}
     {action.feedback}
+    {!!boosters.length && <div className="vet-event-list"><h3>Mốc tiêm nhắc lại đã được chỉ định</h3>{boosters.map(v => <article className="vet-event" key={`booster-${v.VaccinationID}`}><time>{vetDate(v.NextDueDate)}</time><div><strong>{v.HorseName} · {v.VaccineName}</strong><p>{({ overdue: 'Quá hạn nhắc lại', today: 'Đến hạn hôm nay', upcoming: 'Sắp đến hạn' })[dueGroup(v.NextDueDate)]} · Ngày chỉ định, chưa xác nhận đã tiêm mũi tiếp theo.</p></div></article>)}</div>}
     <ResourceState data={vaccinations}><ResourceState data={schedules}>
       {!rows.length && <p className="vet-empty">Không có lịch phù hợp.</p>}
       <div className={view === 'days' ? 'vet-calendar-days' : 'vet-event-list'}>{rows.map(row => <article className="vet-event" id={row.key} data-selected={params.get('event') === row.key || undefined} key={row.key}><time>{vetDate(row.day)}</time><div><Link to={`/vet/horses/${row.HorseID}?tab=calendar`}><strong>{row.HorseName}</strong></Link><p>{row.label}</p><span className={`vet-pill due-${row.Status === 'Completed' ? 'completed' : row.Status === 'Overdue' ? 'overdue' : dueGroup(row.day)}`}>{statusLabels[row.Status]}{row.Status === 'Scheduled' && dueGroup(row.day) === 'overdue' ? ' · Quá hạn' : ''}</span><p>Bác sĩ: {row.VetName || 'Chưa xác định'}</p>{row.NextDueDate && <p>Nhắc lại theo chỉ định: {row.NextDueDate}</p>}<p className="vet-preserve">{row.Note}</p></div>
         {canManage && <CalendarEventEditor row={row} onChanged={() => { vaccinations.reload(); schedules.reload() }} />}
       </article>)}</div>
     </ResourceState></ResourceState>
-    <p className="vet-caption">Nhắc hạn xuất hiện trong mục thông báo khi tải ứng dụng. Chưa có nhắc việc tự động.</p>
+    <p className="vet-caption">Theo dõi nhắc hạn trong mục Thông báo. Nhắc trong ứng dụng và email là hai kênh riêng.</p>
   </section>
 }
 
@@ -127,6 +134,7 @@ function ReportCard({ report: r, horse, currentUser, canManage, reload }) {
   return <article className={`vet-report ${r.Severity === 'Urgent' ? 'vet-report-urgent' : ''}`}><div className="vet-toolbar"><Link to={`/vet/horses/${r.HorseID}`}><strong>{r.HorseName}</strong></Link><span className={`vet-pill ${r.Severity === 'Urgent' ? 'due-overdue' : ''}`}>{r.Severity === 'Urgent' ? '⚠ Khẩn' : 'Thông thường'}</span><span className="vet-pill">{({ Reported: 'Chờ nhận', Reviewing: 'Đang xử lý', Resolved: 'Đã xử lý' })[r.Status]}</span></div><p>{r.ReportedByName} · {vetDateTime(r.ReportedAt)}</p><p className="vet-preserve">{r.Description}</p>{r.ImageUrl && <ReportImage url={r.ImageUrl} />}{r.TrainingSessionID && <p>Buổi tập liên quan: #{r.TrainingSessionID}</p>}<p>Bác sĩ xử lý: {r.VetName || 'Chưa nhận'}</p>{r.VetNote && <p>Kết luận xử lý: {r.VetNote}</p>}{r.ResolvedAt && <p>Hoàn tất: {vetDateTime(r.ResolvedAt)}</p>}
     {r.MedicalRecordID && (r.Status === 'Resolved' || !canManage || !owns) && <Link to={examUrl}>Xem phiếu khám #{r.MedicalRecordID}</Link>}
     {r.Notes?.map(n => <p key={n.HealthReportNoteID} className="vet-amendment">{n.NoteByName} · {vetDateTime(n.NoteAt)}<br />{n.Content}</p>)}
+    <ReportAttachments attachments={r.Attachments} />
     {canManage && r.Status !== 'Resolved' && <><div className="vet-toolbar">{r.Status === 'Reported' && <button className="button" disabled={action.busy} onClick={() => action.run(`${base}/take`, {})}>Nhận xử lý</button>}{r.Status === 'Reviewing' && owns && <Link className="button" to={examUrl}>{r.MedicalRecordID ? 'Mở bệnh án liên quan' : 'Tạo phiếu khám'}</Link>}{horse && currentUser.permissions.includes('TRAINING_LOCK_MANAGE') && <button type="button" className="button vet-emergency" onClick={() => setShowLock(!showLock)}>Khóa tập khẩn cấp</button>}</div>
       {showLock && horse && <TrainingLocks horse={horse} currentUser={currentUser} compact />}
       <form className="vet-operation-form" onSubmit={async e => { e.preventDefault(); const form = e.currentTarget; const content = new FormData(form).get('content').trim(); if (content && await action.run(`${base}/notes`, { Content: content })) form.reset() }}><label className="form-field"><span>Diễn biến / ghi chú xử lý</span><textarea name="content" required maxLength={2000} /></label><button className="button button-secondary" disabled={action.busy}>Thêm ghi chú</button></form>
@@ -176,7 +184,7 @@ export function VetTreatments({ horse, records, currentUser, onChanged }) {
   return <section className="panel"><div className="vet-toolbar"><h2>Điều trị và đơn thuốc</h2><button className="button button-secondary" disabled={data.loading || action.busy} onClick={data.reload}>Làm mới đơn thuốc</button></div>
     <ResourceState data={data}>{!data.rows.length && <p>Chưa có thuốc được ghi nhận.</p>}{data.rows.map(t => {
       const record = records.find(r => r.id === String(t.MedicalRecordID))
-      const canEdit = canManage && record && (record.recordStatus === 'Signed' || record.vetId === currentUser.id)
+      const canEdit = canManage && record?.recordStatus === 'Draft' && record.vetId === currentUser.id
       return <article className="vet-amendment" key={t.TreatmentID}><strong>{t.MedicineName} · Phiếu #{t.MedicalRecordID} · {record?.recordStatus === 'Draft' ? 'Nháp' : record?.recordStatus === 'Signed' ? 'Đã chốt' : 'Chưa xác định trạng thái'}</strong><p>Liều và đơn vị: {t.Dose} · Đường dùng: {routes[t.Route] || 'Chưa ghi nhận'}</p><p>{vetDate(t.StartDate)} → {t.EndDate ? vetDate(t.EndDate) : 'Chưa ghi ngày kết thúc'}</p>{t.WithdrawalUntil && <p>Ngưng thuốc đến: {vetDate(t.WithdrawalUntil)}{t.WithdrawalActive ? ' · Còn trong thời gian ngưng thuốc' : ''}</p>}<p>{t.Note}</p>
         {canEdit && <button className="button button-secondary" disabled={action.busy} onClick={() => setEditing(t.TreatmentID)}>Cập nhật thuốc</button>}
         {editing === t.TreatmentID && canEdit && editor(t)}

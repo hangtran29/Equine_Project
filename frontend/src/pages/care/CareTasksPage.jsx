@@ -2,6 +2,8 @@
 //  mode="mine": Groom xem việc được giao, bấm Đã làm / Bỏ qua.
 //  mode="club": Head Trainer xem việc của cả CLB, giao thêm việc, sinh việc trước cho ngày tới.
 import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { clubDateTimeInput } from '../vet/vetDomain.js'
 import {
   completeCareTask, createCareTask, generateCareTasks, getApprovedHorses, getCareTasks, getGrooms, skipCareTask,
 } from '../../api/careApi.ts'
@@ -9,17 +11,18 @@ import { Badge, CarePage, FieldError, HorsePicker, Loading, Notice } from './car
 import { TASK_STATUS, TASK_TYPES, addDays, fmtDate, fmtTime, todayText, useLoad, useSubmit } from './careUtils.js'
 
 function isOverdue(task) {
-  return task.Status === 'Pending' && new Date(task.ScheduledAt) < new Date()
+  return task.Status === 'Pending' && String(task.ScheduledAt).slice(0, 19) < clubDateTimeInput()
 }
 
 function TaskCard({ task, canComplete, canSkip, showGroom, onDone }) {
   const [mode, setMode] = useState('')
   const [text, setText] = useState('')
+  const [outcome, setOutcome] = useState('')
   const action = useSubmit()
   async function submit(event) {
     event.preventDefault()
     const ok = mode === 'complete'
-      ? await action.run(() => completeCareTask(task.CareTaskID, text.trim()), 'Đã ghi nhận hoàn thành.')
+      ? await action.run(() => completeCareTask(task.CareTaskID, text.trim(), outcome), 'Đã ghi nhận hoàn thành.')
       : await action.run(() => skipCareTask(task.CareTaskID, text.trim()), 'Đã ghi nhận bỏ qua.')
     if (ok) { setMode(''); setText(''); onDone() }
   }
@@ -32,12 +35,15 @@ function TaskCard({ task, canComplete, canSkip, showGroom, onDone }) {
         <span className="care-task-horse">{task.HorseName}</span>
         <Badge map={TASK_STATUS} value={task.Status} />
         {overdue && <span className="care-badge care-badge-danger">Quá giờ</span>}
+        <span className={`care-badge care-badge-${task.Priority === 'Urgent' ? 'danger' : 'muted'}`}>{task.Priority === 'Urgent' ? 'Khẩn' : 'Thông thường'}</span>
         {!task.IsAuto && <span className="care-badge care-badge-info">Giao thêm</span>}
       </div>
       {task.Note && <p className="care-task-note">{task.Note}</p>}
+      {task.OutcomeNote && <p className="care-task-note"><strong>{task.Status === 'Skipped' ? 'Lý do bỏ qua' : 'Ghi nhận của Groom'}:</strong> {task.OutcomeNote}</p>}
       <p className="care-task-meta">
-        {showGroom && <>Groom: <b>{task.GroomName}</b> · </>}
-        {task.IsAuto ? 'Hệ thống tự sinh theo chỉ tiêu' : `Giao bởi ${task.AssignedByName || '—'}`}
+        {showGroom && <>Groom: <b>{task.GroomName || 'Chưa phân công'}</b> · </>}
+        Chuồng: {task.StallNumber || 'Chưa xếp'} · {task.Source}{task.AssignedByName && ` · ${task.AssignedByName}`}
+        {task.FeedingOutcome && <> · Ăn: {({ All: 'hết', Partial: 'một phần', Refused: 'bỏ ăn' })[task.FeedingOutcome]}</>}
         {task.CompletedAt && <> · Xong lúc {fmtTime(task.CompletedAt)}</>}
       </p>
       {task.Status === 'Pending' && (canComplete || canSkip) && !mode && <div className="care-actions">
@@ -45,6 +51,7 @@ function TaskCard({ task, canComplete, canSkip, showGroom, onDone }) {
         {canSkip && <button className="button button-secondary" type="button" onClick={() => { setMode('skip'); setText('') }}>Bỏ qua</button>}
       </div>}
       {mode && <form className="care-inline-form" onSubmit={submit}>
+        {mode === 'complete' && task.TaskType === 'Feeding' && <label className="form-field"><span>Tình trạng ăn</span><select required value={outcome} onChange={e => setOutcome(e.target.value)}><option value="">Chọn tình trạng</option><option value="All">Ăn hết</option><option value="Partial">Ăn một phần</option><option value="Refused">Bỏ ăn</option></select></label>}
         <label className="form-field"><span>{mode === 'complete' ? 'Ghi chú (không bắt buộc)' : 'Lý do bỏ qua'}</span>
           <input value={text} onChange={e => setText(e.target.value)} maxLength={1000} required={mode === 'skip'} autoFocus
             placeholder={mode === 'complete' ? 'vd Ngựa ăn hết khẩu phần' : 'vd Ngựa đang đi khám, chưa cho ăn được'} />
@@ -61,17 +68,20 @@ function TaskCard({ task, canComplete, canSkip, showGroom, onDone }) {
   </article>
 }
 
-function ExtraTaskForm({ horses, grooms, date, onSaved }) {
+function ExtraTaskForm({ horses, date, onSaved, currentUser }) {
   const [open, setOpen] = useState(false)
-  const [form, setForm] = useState({ HorseID: '', GroomID: '', TaskType: 'Feeding', Time: '08:00', Note: '' })
+  const vet = currentUser.permissions.includes('MEDICAL_MANAGE')
+  const trainer = currentUser.permissions.includes('TRAINING_PLAN_MANAGE')
+  const [form, setForm] = useState({ HorseID: '', TaskType: vet ? 'Medical Care' : trainer ? 'Training Support' : 'Cleaning', Time: '08:00', Note: '', MedicalRecordID: '', Priority: 'Normal' })
   const action = useSubmit()
   const set = key => event => setForm(f => ({ ...f, [key]: event.target.value }))
   async function submit(event) {
     event.preventDefault()
     const ok = await action.run(() => createCareTask({
-      HorseID: Number(form.HorseID), GroomID: Number(form.GroomID), TaskType: form.TaskType,
+      HorseID: Number(form.HorseID), TaskType: form.TaskType, Priority: form.Priority,
+      ...(vet && form.MedicalRecordID ? { MedicalRecordID: Number(form.MedicalRecordID) } : {}),
       ScheduledAt: `${date}T${form.Time}:00`, Note: form.Note.trim() || null,
-    }), 'Đã giao việc.')
+    }), 'Đã lưu công việc. Việc chưa có Groom sẽ chờ Manager phân công.')
     if (ok) { setForm(f => ({ ...f, Note: '' })); setOpen(false); onSaved() }
   }
   if (!open) return <>
@@ -87,20 +97,18 @@ function ExtraTaskForm({ horses, grooms, date, onSaved }) {
           <option value="">Chọn ngựa</option>
           {horses.map(h => <option key={h.HorseID} value={h.HorseID}>{h.HorseName}</option>)}
         </select><FieldError fields={action.fields} name="HorseID" /></label>
-      <label className="form-field"><span>Giao cho Groom</span>
-        <select required value={form.GroomID} onChange={set('GroomID')}>
-          <option value="">Chọn Groom</option>
-          {grooms.map(g => <option key={g.UserID} value={g.UserID}>{g.FullName}</option>)}
-        </select><FieldError fields={action.fields} name="GroomID" /></label>
+      <p>Hệ thống giao cho Groom đang phụ trách ngựa. Nếu chưa có Groom, Manager sẽ thấy việc chưa phân công.</p>
+      {vet && <label className="form-field"><span>Mã phiếu chỉ định (bắt buộc nếu đang khóa tập)</span><input type="number" min="1" value={form.MedicalRecordID} onChange={set('MedicalRecordID')} /><FieldError fields={action.fields} name="MedicalRecordID" /></label>}
+      <label className="form-field"><span>Ưu tiên</span><select value={form.Priority} onChange={set('Priority')}><option value="Normal">Thông thường</option><option value="Urgent">Khẩn</option></select></label>
       <label className="form-field"><span>Loại việc</span>
         <select value={form.TaskType} onChange={set('TaskType')}>
-          {Object.entries(TASK_TYPES).map(([value, text]) => <option key={value} value={value}>{text}</option>)}
+          {Object.entries(TASK_TYPES).filter(([value]) => trainer ? value === 'Training Support' : vet || !['Medical Care', 'Ice Leg Soak'].includes(value)).map(([value, text]) => <option key={value} value={value}>{text}</option>)}
         </select></label>
       <label className="form-field"><span>Giờ</span>
         <input type="time" required value={form.Time} onChange={set('Time')} />
         <FieldError fields={action.fields} name="ScheduledAt" /></label>
       <label className="form-field care-span-2"><span>Ghi chú cho Groom</span>
-        <input maxLength={1000} value={form.Note} onChange={set('Note')} placeholder="vd Bôi thuốc chân trước trái" /></label>
+        <input required maxLength={1000} value={form.Note} onChange={set('Note')} placeholder="Hướng dẫn cụ thể cho Groom" /></label>
     </div>
     <Notice state={action} />
     <div className="care-actions">
@@ -117,14 +125,17 @@ export default function CareTasksPage({ mode = 'mine', currentUser }) {
   const [status, setStatus] = useState('')
   const [horseId, setHorseId] = useState('')
   const [groomId, setGroomId] = useState('')
-  const tasks = useLoad(() => getCareTasks({ Date: date, mine: !club, GroomID: club ? groomId : undefined }), [date, club, groomId])
-  const lookups = useLoad(() => (club ? Promise.all([getApprovedHorses(), getGrooms()]) : Promise.resolve([[], []])), [club])
+  const [taskType, setTaskType] = useState('')
+  const [unassigned, setUnassigned] = useState(false)
+  const canGenerate = currentUser.permissions.some(p => ['CLUB_MANAGE', 'TRAINER_ASSIGN'].includes(p))
+  const tasks = useLoad(() => getCareTasks({ Date: date, mine: !club, GroomID: club ? groomId : undefined, Unassigned: unassigned }), [date, club, groomId, unassigned])
+  const lookups = useLoad(() => (club ? Promise.all([getApprovedHorses(), canGenerate ? getGrooms() : Promise.resolve([])]) : Promise.resolve([[], []])), [club, canGenerate])
   const generate = useSubmit()
   const [generated, setGenerated] = useState('')
   const [horses, grooms] = lookups.data || [[], []]
   const rows = useMemo(() => (tasks.data || [])
-    .filter(t => (!status || t.Status === status) && (!horseId || String(t.HorseID) === horseId))
-    .sort((a, b) => String(a.ScheduledAt).localeCompare(String(b.ScheduledAt))), [tasks.data, status, horseId])
+    .filter(t => (!status || t.Status === status) && (!horseId || String(t.HorseID) === horseId) && (!taskType || t.TaskType === taskType))
+    .sort((a, b) => String(a.ScheduledAt).localeCompare(String(b.ScheduledAt))), [tasks.data, status, horseId, taskType])
   const all = useMemo(() => tasks.data || [], [tasks.data])
   const summary = {
     total: all.length, pending: all.filter(t => t.Status === 'Pending').length,
@@ -151,7 +162,7 @@ export default function CareTasksPage({ mode = 'mine', currentUser }) {
     eyebrow={club ? 'HUẤN LUYỆN VIÊN TRƯỞNG' : 'GROOM'}
     title={club ? 'Việc chăm sóc toàn câu lạc bộ' : 'Việc chăm sóc của tôi'}
     description={club
-      ? 'Việc hằng ngày do hệ thống tự sinh theo chỉ tiêu (cho ăn theo khẩu phần, dọn chuồng, tắm sau buổi tập, ngâm chân khi bị khóa tập). Theo dõi tiến độ và giao thêm việc khi cần.'
+      ? 'Theo dõi công việc trong phạm vi được giao. Việc y tế phát sinh theo chỉ định Vet; việc chưa có Groom được giữ để Manager phân công.'
       : 'Việc được hệ thống tự giao theo khẩu phần, lịch tập và chỉ tiêu của câu lạc bộ. Làm xong bấm "Đã làm"; không làm được thì bấm "Bỏ qua" và ghi lý do.'}
   >
     <section className="filter-card care-toolbar">
@@ -169,7 +180,9 @@ export default function CareTasksPage({ mode = 'mine', currentUser }) {
           {Object.entries(TASK_STATUS).map(([value, [text]]) => <option key={value} value={value}>{text}</option>)}
         </select></label>
       <HorsePicker horses={taskHorses} value={horseId} onChange={setHorseId} allowAll />
-      {club && <label className="filter-field"><span>Groom</span>
+      <label className="filter-field"><span>Loại việc</span><select value={taskType} onChange={e => setTaskType(e.target.value)}><option value="">Tất cả</option>{Object.entries(TASK_TYPES).map(([v, label]) => <option key={v} value={v}>{label}</option>)}</select></label>
+      {club && <label><input type="checkbox" checked={unassigned} onChange={e => setUnassigned(e.target.checked)} />Chưa có Groom</label>}
+      {club && canGenerate && <label className="filter-field"><span>Groom</span>
         <select value={groomId} onChange={e => setGroomId(e.target.value)}>
           <option value="">Tất cả Groom</option>
           {grooms.map(g => <option key={g.UserID} value={g.UserID}>{g.FullName}</option>)}
@@ -184,8 +197,8 @@ export default function CareTasksPage({ mode = 'mine', currentUser }) {
     </section>
 
     {club && <div className="care-toolbar-actions">
-      <ExtraTaskForm horses={horses} grooms={grooms} date={date} onSaved={tasks.reload} />
-      {date >= today && <button className="button button-secondary" type="button" disabled={generate.busy} onClick={runGenerate}>
+      <ExtraTaskForm horses={horses} date={date} onSaved={tasks.reload} currentUser={currentUser} />
+      {canGenerate && date >= today && <button className="button button-secondary" type="button" disabled={generate.busy} onClick={runGenerate}>
         {generate.busy ? 'Đang sinh việc…' : 'Sinh lại việc theo chỉ tiêu'}</button>}
       {generated && <span className="care-inline-notice" role="status">{generated}</span>}
       {generate.error && <span className="error-message" role="alert">{generate.error}</span>}
@@ -197,10 +210,10 @@ export default function CareTasksPage({ mode = 'mine', currentUser }) {
           : ['Không có việc trong ngày này', date < today ? 'Ngày đã qua không sinh thêm việc.' : 'Khi có khẩu phần, buổi tập hoặc chỉ tiêu, việc sẽ tự xuất hiện ở đây.']}>
         <div className="care-task-list">
           {rows.map(task => <TaskCard key={task.CareTaskID} task={task} showGroom={club}
-            canComplete={!club && String(task.GroomID) === String(currentUser?.id)} canSkip={canSkip} onDone={tasks.reload} />)}
+            canComplete={!club && String(task.GroomID) === String(currentUser?.id)} canSkip={canSkip && (!club || canGenerate || String(task.AssignedBy) === String(currentUser.id))} onDone={tasks.reload} />)}
         </div>
       </Loading>
     </section>
-    {!club && <p className="care-muted care-footnote">Thấy ngựa có dấu hiệu bất thường khi chăm sóc (què, bỏ ăn, sưng chân…) thì báo ngay cho Vet hoặc Huấn luyện viên trưởng.</p>}
+    {!club && <p className="care-muted care-footnote">Thấy ngựa có dấu hiệu bất thường: <Link to="/health-reports">Báo sức khỏe hoặc báo khẩn ngay</Link>.</p>}
   </CarePage>
 }

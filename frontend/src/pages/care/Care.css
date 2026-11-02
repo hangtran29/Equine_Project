@@ -157,3 +157,5 @@
   .care-task { grid-template-columns: 52px 1fr; }
 }
 .care-page .page-heading > div { max-width: 680px; }
+.care-report-photos { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
+.care-report-photos img { width: 160px; height: 130px; object-fit: cover; border-radius: 10px; }

@@ -11,7 +11,7 @@ export function PrescriptionSummary({ rows }) {
     <strong>{t.MedicineName}</strong><dl className="vet-details">
       <div><dt>Liều kèm đơn vị</dt><dd>{t.Dose}</dd></div><div><dt>Đường dùng</dt><dd>{medicineRoutes[t.Route] || 'Chưa ghi nhận'}</dd></div>
       <div><dt>Thời gian dùng</dt><dd>{vetDate(t.StartDate)} – {t.EndDate ? vetDate(t.EndDate) : 'Chưa ghi ngày kết thúc'}</dd></div>
-      <div><dt>Ngưng thuốc đến</dt><dd>{vetDate(t.WithdrawalUntil)}{t.WithdrawalActive ? ' · Đang trong thời gian ngưng thuốc' : ''}</dd></div>
+      <div><dt>Ngưng thuốc đến</dt><dd>{t.WithdrawalUntil ? vetDate(t.WithdrawalUntil) : 'Chưa ghi thời gian ngưng thuốc; chưa xác định điều kiện thi đấu.'}{t.WithdrawalActive ? ' · Đang trong thời gian ngưng thuốc' : ''}</dd></div>
       <div className="vet-wide"><dt>Tần suất và hướng dẫn</dt><dd>{t.Note || 'Chưa ghi nhận'}</dd></div>
     </dl>
   </article>)}</div>

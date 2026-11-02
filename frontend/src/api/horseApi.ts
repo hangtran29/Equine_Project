@@ -504,6 +504,7 @@ export interface ExaminationInput {
   trainingEligibility: string;
   restrictionNote: string;
   followUpDate: string;
+  followUpLockId?: string;
   injuryLocation?: string;
   note?: string;
 }
@@ -557,6 +558,7 @@ function mapMedicalRecord(value: unknown): MedicalRecord {
     trainingEligibility: typeof record.TrainingEligibility === 'string' ? record.TrainingEligibility : '',
     restrictionNote: typeof record.RestrictionNote === 'string' ? record.RestrictionNote : '',
     followUpDate: typeof record.FollowUpDate === 'string' ? record.FollowUpDate : '',
+    followUpLockId: record.FollowUpLockID == null ? '' : String(record.FollowUpLockID),
     injuryLocation: typeof record.InjuryLocation === 'string' ? record.InjuryLocation : '',
     note: typeof record.Note === 'string' ? record.Note : '',
     recordStatus: record.RecordStatus === 'Signed' ? 'Signed' : 'Draft',
@@ -598,6 +600,7 @@ function examinationPayload(input: ExaminationInput): ApiRecord {
     ...(input.trainingEligibility ? { TrainingEligibility: input.trainingEligibility } : {}),
     ...(input.restrictionNote !== undefined ? { RestrictionNote: input.restrictionNote } : {}),
     FollowUpDate: input.followUpDate || null,
+    FollowUpLockID: input.followUpLockId ? Number(input.followUpLockId) : null,
     ...(input.injuryLocation !== undefined ? { InjuryLocation: input.injuryLocation } : {}),
     ...(input.note !== undefined ? { Note: input.note } : {}),
   };

@@ -38,6 +38,13 @@ export default function HorseInjuryDiagram({ view, onView, mode, canAdd, onMode,
 
   function choose(region, event) {
     if (!placing) return
+    // A region click has already passed the SVG path hit test. Region selection
+    // must not depend on an anchor pixel's opacity (thin ears/legs can have an
+    // anchor in transparent space). Coordinate markers still use the alpha map.
+    if (selectingRegions) {
+      if (!event?.detail || photo.map.contains(pointerInSvg(svg.current, event.clientX, event.clientY), asset.mirrorImage)) onToggleRegion(region.id, view)
+      return
+    }
     let point = regionAnchor(region.id, view)
     if (event?.detail) {
       point = pointerInSvg(svg.current, event.clientX, event.clientY)
@@ -47,8 +54,7 @@ export default function HorseInjuryDiagram({ view, onView, mode, canAdd, onMode,
       if (!matrix || !event.currentTarget.isPointInFill(local.matrixTransform(matrix.inverse()))) return
     }
     if (photo.map.contains(point, asset.mirrorImage)) {
-      if (selectingRegions) onToggleRegion(region.id, view)
-      else onPick(region.id, view, point)
+      onPick(region.id, view, point)
     }
   }
   return <div className="injury-diagram-viewer">
