@@ -39,7 +39,7 @@ class TrainerSchedulingTests(TrainingTestCase):
         # Work Rider ưu tiên: chỉ trainer phụ trách / Head Trainer
         body = {"WorkRiderID": self.rider.id, "Priority": 1}
         self.assertEqual(trainer2.post(f"/api/horses/{horse_id}/work-rider-preferences", body,
-                                       format="json").status_code, 403)
+                                       format="json").status_code, 404)
         self.assertEqual(trainer.post(f"/api/horses/{horse_id}/work-rider-preferences", body,
                                       format="json").status_code, 201)
 
@@ -94,9 +94,12 @@ class OwnerReportTests(TrainingTestCase):
         self.assertEqual(res.status_code, 200, res.data)
         self.assertTrue(any("[Khẩn]" in m.subject and self.owner.email in m.to for m in mail.outbox))
 
-        # Danh sách buổi: không có buổi chưa được đánh giá
+        # Danh sách buổi: buổi đã tập xong hiện ngay, chưa đánh giá thì chưa có số liệu
         rows = {r["TrainingSessionID"]: r for r in owner.get(f"/api/owner/horses/{horse_id}/training-sessions").data}
-        self.assertEqual(set(rows), {reviewed, cancelled, stopped})
+        self.assertEqual(set(rows), {reviewed, waiting, cancelled, stopped})
+        self.assertTrue(rows[waiting]["AwaitingReview"])
+        self.assertIsNone(rows[waiting]["PerformanceScore"])
+        self.assertFalse(rows[reviewed]["AwaitingReview"])
         self.assertEqual(rows[reviewed]["Evaluation"], "Good")
         self.assertEqual(rows[reviewed]["DistanceKm"], 3.4)
         self.assertEqual(rows[reviewed]["DurationMinutes"], 44)
@@ -111,7 +114,9 @@ class OwnerReportTests(TrainingTestCase):
         self.assertEqual(detail["RiderObservation"], "Hơi nặng chân cuối buổi")
         self.assertEqual(detail["VideoUrl"], "https://video.test/1")
         self.assertNotIn("SubstituteObservation", detail)
-        self.assertEqual(owner.get(f"/api/owner/training-sessions/{waiting}").status_code, 404)
+        pending = owner.get(f"/api/owner/training-sessions/{waiting}").data          # chờ đánh giá: chưa có số liệu
+        self.assertTrue(pending["AwaitingReview"])
+        self.assertIsNone(pending["AvgSpeedKmh"])
 
         # Tổng kết giáo án + giai đoạn đang chạy (tính đến hôm nay)
         body = owner.get(f"/api/owner/training-plans/{plan_id}").data

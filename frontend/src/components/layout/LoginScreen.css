@@ -58,6 +58,11 @@
 .auth-field input::placeholder { color: #8b8f82; }
 .auth-field input:focus, .auth-field select:focus { border-color: var(--auth-green); background: #fffdf6; box-shadow: 0 0 0 4px rgba(52, 64, 47, .1); }
 .auth-field:has(.auth-reveal) input { padding-right: 50px; }
+/* lỗi của từng ô: viền đỏ và chữ đỏ ngay dưới ô */
+.auth-field-box { display: grid; gap: 6px; align-content: start; }
+.auth-field-invalid input, .auth-field-invalid select { border-color: #c9826f; }
+.auth-field-invalid input:focus { border-color: #a9472f; box-shadow: 0 0 0 4px rgba(169, 71, 47, .1); }
+.auth-field-error { margin: 0 4px; font-size: 13px; line-height: 1.4; font-weight: 600; color: #8a2f1d; }
 .auth-reveal {
   position: absolute; right: 5px; top: 5px; width: 44px; height: 44px; border: 0; border-radius: 8px; display: grid; place-items: center;
   color: var(--auth-muted); background: transparent; cursor: pointer;
@@ -114,3 +119,18 @@
 @media (prefers-reduced-motion: reduce) {
   .auth-form { animation: none; }
 }
+
+/* quên mật khẩu, đặt mật khẩu mới, đổi mật khẩu lần đầu */
+.auth-forgot { margin: -4px 0 0; text-align: right; font-size: 13.5px; }
+.auth-forgot button { padding: 2px 0; border: 0; background: none; color: var(--auth-green); font: inherit; font-weight: 700; cursor: pointer;
+  text-decoration: underline; text-underline-offset: 4px; text-decoration-color: rgba(52, 64, 47, .35); }
+.auth-page-title { margin: 0; text-align: center; font-family: Lora, Georgia, serif; font-size: 28px; font-weight: 600; color: var(--auth-green); }
+.auth-page-title + .auth-heading { margin-top: -6px; }
+.auth-subtitle { white-space: nowrap; }
+/* Tài khoản chưa được cấp quyền: thông tin liên hệ Quản lý câu lạc bộ */
+.auth-contact { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid #e4e6dc; border-radius: 12px; background: #fff; text-align: left; }
+.auth-contact > div { flex: 1; min-width: 0; }
+.auth-contact b { display: block; color: var(--auth-ink); font-size: 14px; }
+.auth-contact small { color: var(--auth-muted); font-size: 12px; }
+.auth-contact a { color: #4c5b36; font-weight: 700; text-underline-offset: 3px; }
+.auth-contact-av { width: 34px; height: 34px; border-radius: 50%; background: #e7ebdc; color: #4c5b36; display: grid; place-items: center; font-weight: 700; font-size: 12px; flex: none; }

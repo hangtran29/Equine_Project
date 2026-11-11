@@ -1,6 +1,27 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { matchesEffectiveTraining, resolveEffectiveTraining } from '../src/components/horse/effectiveTraining.js'
+import { activeLocksByHorse, trainingLockCovers } from '../src/flow2/trainingLocks.js'
+
+test('Scheduling keeps an Active lock after its planned end, until explicit release', () => {
+  const lock = { HorseID: 4, LockStatus: 'Active', LockLevel: 'Full', LockStartDate: '2026-10-01T08:00:00', LockEndDate: '2026-10-02T08:00:00' }
+  assert.equal(trainingLockCovers(lock, '2026-11-08'), true)
+  assert.equal(trainingLockCovers(lock, '2026-09-30'), false)
+  assert.equal(trainingLockCovers({ ...lock, LockStatus: 'Released' }, '2026-11-08'), false)
+  assert.equal(activeLocksByHorse([lock], '2026-11-08')[4], lock)
+})
+
+test('Trainer cards preserve Active orders and select the strictest applicable restriction', () => {
+  const locks = [
+    { HorseID: 4, LockStatus: 'Active', LockLevel: 'Restricted', MaxIntensity: 40, LockStartDate: '2026-10-01' },
+    { HorseID: 4, LockStatus: 'Active', LockLevel: 'Restricted', MaxIntensity: 20, LockStartDate: '2026-10-01' },
+    { HorseID: 4, LockStatus: 'Released', LockLevel: 'Full', LockStartDate: '2026-10-01' },
+  ]
+  assert.equal(activeLocksByHorse(locks, '2026-11-08')[4].MaxIntensity, 20)
+  const full = { HorseID: 4, LockStatus: 'Active', LockLevel: 'Full', LockStartDate: '2099-01-01' }
+  assert.equal(activeLocksByHorse([...locks, full])[4], full)
+  assert.equal(activeLocksByHorse([...locks, full], '2026-11-08')[4].MaxIntensity, 20)
+})
 
 const horse = { id: '1', profileStatus: 'APPROVED', healthStatus: 'ELIGIBLE' }
 const eligible = { id: '10', horseId: '1', recordStatus: 'Signed', examDate: '2026-10-20T09:00:00', trainingEligibility: 'Eligible' }

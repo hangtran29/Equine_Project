@@ -42,6 +42,7 @@ export function normalizeUser(value: unknown): User {
       ? record.Permissions.filter((item): item is string => typeof item === 'string')
       : [],
     isActive: record.Status === 'Active',
+    mustChangePassword: record.MustChangePassword === true,
   };
 }
 

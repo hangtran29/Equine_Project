@@ -1,4 +1,4 @@
-"""Email Flow 3 gửi chủ ngựa: ngựa bị Vet khóa tập / được mở khóa (gửi sau khi lưu database, lỗi không làm hỏng thao tác)."""
+"""Email Flow 3 gửi chủ ngựa: ngựa bị bác sĩ thú y khóa tập / được mở khóa (gửi sau khi lưu database, lỗi không làm hỏng thao tác)."""
 from apps.core.emails import send_email
 
 LEVEL_TEXT = {"Full": "dừng tập hoàn toàn", "Restricted": "chỉ được tập nhẹ"}

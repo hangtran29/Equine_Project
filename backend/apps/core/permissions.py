@@ -43,10 +43,10 @@ def club_users_with_role(club_id, *role_codes):
 
 
 def require_club_user(user_id, club_id, *role_codes, field="UserID"):
-    """Người được chọn (Work Rider, Trainer, Groom...) phải thuộc CLB và có đúng vai trò. Sai -> lỗi 400 ở `field`."""
+    """Người được chọn (kỵ sĩ tập luyện, Huấn luyện viên, người chăm sóc ngựa...) phải thuộc câu lạc bộ và có đúng vai trò. Sai -> lỗi 400 ở `field`."""
     from rest_framework.exceptions import ValidationError
 
     found = club_users_with_role(club_id, *role_codes).filter(pk=user_id).first() if user_id else None
     if found is None:
-        raise ValidationError({field: [f"Cần chọn người dùng đang hoạt động trong CLB có vai trò {' / '.join(role_codes)}."]})
+        raise ValidationError({field: [f"Cần chọn người dùng đang hoạt động trong câu lạc bộ có vai trò {' / '.join(role_codes)}."]})
     return found

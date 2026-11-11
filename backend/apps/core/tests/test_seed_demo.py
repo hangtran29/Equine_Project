@@ -120,6 +120,6 @@ class ManagerWithoutClubTests(TestCase):
         res = client.post("/api/horses", {
             "HorseName": "Silver Comet", "OwnerID": owner.pk, "Breed": "Thoroughbred", "DateOfBirth": "2020-03-15",
             "Gender": "Male", "CoatColor": "Hạt dẻ", "SireName": "Storm King", "DamName": "Lady Rain",
-            "MicrochipNumber": "985141000999001", "PassportNumber": "VN-TB-2020-0999"}, format="json")
+            "MicrochipNumber": "985141000999001", "PassportNumber": "704001000000999"}, format="json")
         self.assertEqual(res.status_code, 409, res.data)
         self.assertEqual(res.data["code"], "USER_NO_CLUB")

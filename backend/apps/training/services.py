@@ -17,7 +17,11 @@ Giai đoạn: trainer phụ trách (hoặc Head Trainer) "chốt" giai đoạn k
 Training Lock (Flow 3) chặn buổi tập giống trigger SQL Server:
   Full -> không xếp / bắt đầu buổi tập; Restricted -> TrainingLoad phải có và <= MaxIntensity.
 """
+from apps.core.clubtime import now as club_now, today as club_today
+from django.db import transaction
+from apps.core.locking import horse_serialized
 from datetime import date
+from decimal import Decimal
 
 from django.db.models import Max
 from django.utils import timezone
@@ -47,7 +51,7 @@ SUPERVISOR_ROLES = ("TRAINER", "HEAD_TRAINER")
 # ---------------------------------------------------------------------------
 def ensure_horse_in_training(horse):
     if horse.registration_status != Horse.RegistrationStatus.APPROVED:
-        raise BusinessRuleError("Chỉ ngựa đã được tiếp nhận (Approved) mới đưa vào huấn luyện.", "HORSE_NOT_APPROVED")
+        raise BusinessRuleError("Chỉ ngựa đã được tiếp nhận mới đưa vào huấn luyện.", "HORSE_NOT_APPROVED")
 
 
 def active_assignment(horse):
@@ -56,7 +60,7 @@ def active_assignment(horse):
 
 
 def active_lock(horse):
-    """Training Lock đang hiệu lực (Flow 3). Chưa có Flow 3 thì không có lock nào -> None."""
+    """Khóa tập đang hiệu lực (Flow 3). Chưa có Flow 3 thì không có lock nào -> None."""
     if not flows.has_flow3():
         return None
     from apps.medical.models import TrainingLock
@@ -73,7 +77,7 @@ def check_session_lock(horse, session_date, training_load):
         raise BusinessRuleError(TRIGGER_MESSAGES["51002"], "TRAINING_LOCK_FULL")
     if lock.max_intensity is not None and (training_load is None or training_load > lock.max_intensity):
         raise BusinessRuleError(
-            f"Ngựa đang bị hạn chế tập: buổi tập phải ghi TrainingLoad và không vượt {lock.max_intensity}.",
+            f"Ngựa đang giới hạn mức tập: mức tải tối đa là {format(Decimal(str(lock.max_intensity)).normalize(), 'f')}.",
             "TRAINING_LOCK_RESTRICTED",
         )
 
@@ -83,14 +87,14 @@ def check_plan_lock(plan):
     lock = active_lock(plan.assignment.horse)
     if lock is None or lock.lock_level != "Full":
         return
-    lock_end = lock.lock_end_date.date() if lock.lock_end_date else date.max
+    lock_end = date.max
     plan_end = plan.end_date or date.max
     if plan.start_date <= lock_end and plan_end >= lock.lock_start_date.date():
         raise BusinessRuleError(TRIGGER_MESSAGES["51001"], "TRAINING_LOCK_FULL")
 
 
 def can_manage_sessions(user, assignment) -> bool:
-    """Head Trainer (người duyệt giáo án) xếp buổi tập cho mọi ngựa; Trainer chỉ cho ngựa mình đang phụ trách."""
+    """Huấn luyện viên trưởng (người duyệt giáo án) xếp buổi tập cho mọi ngựa; Huấn luyện viên chỉ cho ngựa mình đang phụ trách."""
     if user.has_perm("TRAINING_PLAN_APPROVE"):
         return True
     return (user.has_perm("TRAINING_SESSION_ASSIGN") and assignment.trainer_id == user.pk
@@ -120,18 +124,18 @@ def sessions_of_horse(horse):
 # ---------------------------------------------------------------------------
 def add_trainer_specialization(trainer, specialization, user):
     if TrainerSpecialization.objects.filter(trainer=trainer, specialization=specialization).exists():
-        raise BusinessRuleError("Trainer đã có chuyên môn này.", "ALREADY_EXISTS")
+        raise BusinessRuleError("Huấn luyện viên đã có chuyên môn này.", "ALREADY_EXISTS")
     link = TrainerSpecialization.objects.create(trainer=trainer, specialization=specialization)
     log_action(user, "ADD_TRAINER_SPECIALIZATION", trainer, {"SpecializationID": specialization.id})
     return link
 
 
 def update_trainer_profile(trainer, user, values):
-    """Tạo / sửa hồ sơ trainer (ngày bắt đầu làm nghề, điểm đánh giá)."""
+    """Tạo / sửa hồ sơ huấn luyện viên (ngày bắt đầu làm nghề, điểm đánh giá)."""
     profile = TrainerProfile.objects.filter(trainer=trainer).first() or TrainerProfile(trainer=trainer)
     for attr, value in values.items():
         setattr(profile, attr, value)
-    profile.updated_at = timezone.now()
+    profile.updated_at = club_now()
     profile.updated_by = user
     profile.save()
     log_action(user, "UPDATE_TRAINER_PROFILE", trainer, {
@@ -142,7 +146,7 @@ def update_trainer_profile(trainer, user, values):
 
 
 def add_trainer_credential(trainer, user, values):
-    credential = TrainerCredential.objects.create(trainer=trainer, created_by=user, created_at=timezone.now(),
+    credential = TrainerCredential.objects.create(trainer=trainer, created_by=user, created_at=club_now(),
                                                   **values)
     log_action(user, "ADD_TRAINER_CREDENTIAL", trainer, {
         "CredentialID": credential.id, "CredentialType": credential.credential_type, "Title": credential.title,
@@ -158,14 +162,14 @@ def delete_trainer_credential(credential, user):
 
 
 def add_race_result(trainer, user, values):
-    """Ghi 1 lần ngựa của trainer ra đường đua. Ngựa trong CLB thì lấy tên ngựa từ hồ sơ."""
+    """Ghi 1 lần ngựa của huấn luyện viên ra đường đua. Ngựa trong câu lạc bộ thì lấy tên ngựa từ hồ sơ."""
     horse = values.get("horse")
     if horse is not None:
         if horse.club_id != trainer.club_id:
-            raise ValidationError({"HorseID": ["Ngựa không thuộc CLB của trainer."]})
+            raise ValidationError({"HorseID": ["Ngựa không thuộc câu lạc bộ của huấn luyện viên."]})
         values["horse_name"] = horse.horse_name
     values["horse_name"] = values["horse_name"].strip()
-    result = TrainerRaceResult.objects.create(trainer=trainer, created_by=user, created_at=timezone.now(), **values)
+    result = TrainerRaceResult.objects.create(trainer=trainer, created_by=user, created_at=club_now(), **values)
     log_action(user, "ADD_TRAINER_RACE_RESULT", trainer, {
         "RaceResultID": result.id, "RaceDate": result.race_date.isoformat(), "FinishPosition": result.finish_position,
     })
@@ -180,7 +184,7 @@ def delete_race_result(result, user):
 def remove_trainer_specialization(trainer, specialization, user):
     link = TrainerSpecialization.objects.filter(trainer=trainer, specialization=specialization).first()
     if link is None:
-        raise BusinessRuleError("Trainer không có chuyên môn này.", "NOT_FOUND")
+        raise BusinessRuleError("Huấn luyện viên không có chuyên môn này.", "NOT_FOUND")
     if TrainerHorseAssignment.objects.filter(trainer=trainer, specialization=specialization).exists():
         raise BusinessRuleError("Chuyên môn này đã được dùng trong phân công ngựa nên không xóa được.", "IN_USE")
     TrainerSpecialization.objects.filter(trainer=trainer, specialization=specialization).delete()
@@ -193,13 +197,13 @@ def remove_trainer_specialization(trainer, specialization, user):
 def create_assessment(horse, user, values):
     ensure_horse_in_training(horse)
     if values.get("decision_status", HorseAssessment.Decision.RECOMMENDED) == HorseAssessment.Decision.SUPERSEDED:
-        raise ValidationError({"DecisionStatus": ["Chỉ chọn Recommended hoặc Rejected."]})
+        raise ValidationError({"DecisionStatus": ["Kết luận chỉ được chọn Đề xuất hoặc Không đề xuất."]})
     if values.get("decision_status", HorseAssessment.Decision.RECOMMENDED) == HorseAssessment.Decision.RECOMMENDED:
         # Đánh giá mới thay cho đánh giá Recommended cũ cùng chuyên môn
         horse.assessments.filter(decision_status=HorseAssessment.Decision.RECOMMENDED,
                                  specialization=values["specialization"]).update(
             decision_status=HorseAssessment.Decision.SUPERSEDED)
-    assessment = HorseAssessment.objects.create(horse=horse, head_trainer=user, assessment_date=timezone.now(),
+    assessment = HorseAssessment.objects.create(horse=horse, head_trainer=user, assessment_date=club_now(),
                                                 **values)
     log_action(user, "ASSESS_HORSE", horse, {"AssessmentID": assessment.id})
     return assessment
@@ -209,15 +213,15 @@ def assign_trainer(horse, user, trainer_id, specialization, assessment=None, sta
     ensure_horse_in_training(horse)
     trainer = require_club_user(trainer_id, horse.club_id, "TRAINER", field="TrainerID")
     if active_assignment(horse) is not None:
-        raise BusinessRuleError("Ngựa đã có trainer phụ trách. Kết thúc phân công cũ trước khi giao trainer mới.",
+        raise BusinessRuleError("Ngựa đã có huấn luyện viên phụ trách. Vui lòng kết thúc phân công hiện tại trước khi phân công huấn luyện viên mới.",
                                 "ALREADY_ASSIGNED")
     if not TrainerSpecialization.objects.filter(trainer=trainer, specialization=specialization).exists():
-        raise BusinessRuleError("Trainer chưa có chuyên môn này (TrainerSpecialization).", "SPECIALIZATION_MISMATCH")
+        raise BusinessRuleError("Huấn luyện viên chưa có chuyên môn này.", "SPECIALIZATION_MISMATCH")
     if assessment is not None and assessment.horse_id != horse.pk:
         raise ValidationError({"AssessmentID": ["Phiếu đánh giá không thuộc ngựa này."]})
     assignment = TrainerHorseAssignment.objects.create(
         horse=horse, trainer=trainer, specialization=specialization, assigned_by=user, assessment=assessment,
-        start_date=start_date or date.today(), assignment_note=note or None,
+        start_date=start_date or club_today(), assignment_note=note or None,
     )
     log_action(user, "ASSIGN_TRAINER", horse, {"TrainerHorseAssignmentID": assignment.id, "TrainerID": trainer.id})
     # Gửi kèm giáo án nháp chép từ giáo án mẫu của chuyên môn (trainer sửa rồi gửi duyệt)
@@ -233,10 +237,10 @@ def end_assignment(assignment, user, reason=None):
     """
     if assignment.status != TrainerHorseAssignment.Status.ACTIVE:
         raise BusinessRuleError("Phân công này đã kết thúc.", "INVALID_STATUS")
-    today = date.today()
+    today = club_today()
     cancelled = cancel_sessions(
         TrainingSession.objects.filter(stage__plan__assignment=assignment, status=S.ASSIGNED),
-        user, "Kết thúc phân công trainer",
+        user, "Kết thúc phân công huấn luyện viên",
     )
     assignment.plans.filter(status__in=OPEN_PLAN_STATUSES).update(status=P.CANCELLED)
     assignment.status = TrainerHorseAssignment.Status.ENDED
@@ -253,9 +257,9 @@ def add_work_rider_preference(horse, user, work_rider_id, priority=1, note=None,
     ensure_horse_in_training(horse)
     rider = require_club_user(work_rider_id, horse.club_id, "WORK_RIDER", field="WorkRiderID")
     if horse.work_rider_preferences.filter(work_rider=rider, end_date__isnull=True).exists():
-        raise BusinessRuleError("Work Rider này đã nằm trong danh sách ưu tiên của ngựa.", "ALREADY_EXISTS")
+        raise BusinessRuleError("Kỵ sĩ tập luyện này đã có trong danh sách ưu tiên của ngựa.", "ALREADY_EXISTS")
     preference = HorseWorkRiderPreference.objects.create(
-        horse=horse, work_rider=rider, assigned_by=user, start_date=start_date or date.today(),
+        horse=horse, work_rider=rider, assigned_by=user, start_date=start_date or club_today(),
         priority=priority, note=note or None,
     )
     log_action(user, "ADD_WORK_RIDER_PREFERENCE", horse, {"PreferenceID": preference.id})
@@ -265,7 +269,7 @@ def add_work_rider_preference(horse, user, work_rider_id, priority=1, note=None,
 def end_work_rider_preference(preference, user):
     if preference.end_date is not None:
         raise BusinessRuleError("Ưu tiên này đã kết thúc.", "INVALID_STATUS")
-    preference.end_date = max(date.today(), preference.start_date)
+    preference.end_date = max(club_today(), preference.start_date)
     preference.is_preferred = False
     preference.save(update_fields=["end_date", "is_preferred"])
     log_action(user, "END_WORK_RIDER_PREFERENCE", preference.horse, {"PreferenceID": preference.id})
@@ -277,13 +281,13 @@ def end_work_rider_preference(preference, user):
 # ---------------------------------------------------------------------------
 def ensure_plan_owner(plan, user):
     if plan.assignment.trainer_id != user.pk or plan.assignment.status != TrainerHorseAssignment.Status.ACTIVE:
-        raise BusinessRuleError("Chỉ trainer đang phụ trách ngựa mới được soạn / sửa giáo án này.", "NOT_PLAN_OWNER")
+        raise BusinessRuleError("Chỉ huấn luyện viên đang phụ trách ngựa mới được soạn hoặc chỉnh sửa giáo án này.", "NOT_PLAN_OWNER")
 
 
 def ensure_plan_editable(plan, user):
     ensure_plan_owner(plan, user)
     if plan.status != P.DRAFT:
-        raise BusinessRuleError("Chỉ sửa được giáo án ở trạng thái Draft.", "INVALID_STATUS")
+        raise BusinessRuleError("Chỉ chỉnh sửa được giáo án ở trạng thái bản nháp.", "INVALID_STATUS")
 
 
 def validate_stage_dates(plan, start_date, end_date):
@@ -297,11 +301,11 @@ def create_plan(horse, user, values, stages):
     ensure_horse_in_training(horse)
     assignment = active_assignment(horse)
     if assignment is None or assignment.trainer_id != user.pk:
-        raise BusinessRuleError("Chỉ trainer đang phụ trách ngựa mới được soạn giáo án.", "NOT_PLAN_OWNER")
+        raise BusinessRuleError("Chỉ huấn luyện viên đang phụ trách ngựa mới được soạn giáo án.", "NOT_PLAN_OWNER")
     if values.get("end_date") and values["end_date"] < values["start_date"]:
         raise ValidationError({"EndDate": ["Ngày kết thúc phải sau ngày bắt đầu."]})
     plan_templates.discard_untouched_template_drafts(assignment, user)   # tự soạn thay bản nháp từ mẫu
-    plan = TrainingPlan.objects.create(assignment=assignment, created_at=timezone.now(), **values)
+    plan = TrainingPlan.objects.create(assignment=assignment, created_at=club_now(), **values)
     for order, stage in enumerate(stages, start=1):
         add_stage(plan, user, {**stage, "stage_order": stage.get("stage_order") or order}, log=False)
     log_action(user, "CREATE_TRAINING_PLAN", plan, {"HorseID": horse.pk})
@@ -361,7 +365,7 @@ def submit_plan(plan, user):
     if not plan.stages.exists():
         raise BusinessRuleError("Giáo án cần ít nhất một giai đoạn trước khi gửi duyệt.", "NO_STAGES")
     plan.status = P.PENDING_APPROVAL
-    plan.submitted_at = timezone.now()
+    plan.submitted_at = club_now()
     plan.save(update_fields=["status", "submitted_at"])
     log_action(user, "SUBMIT_TRAINING_PLAN", plan)
     return plan
@@ -371,16 +375,16 @@ def ensure_pending(plan):
     if plan.status != P.PENDING_APPROVAL:
         raise BusinessRuleError("Giáo án không ở trạng thái chờ duyệt.", "INVALID_STATUS")
     if plan.assignment.status != TrainerHorseAssignment.Status.ACTIVE:
-        raise BusinessRuleError("Phân công trainer của giáo án này đã kết thúc.", "ASSIGNMENT_ENDED")
+        raise BusinessRuleError("Phân công huấn luyện viên của giáo án này đã kết thúc.", "ASSIGNMENT_ENDED")
 
 
 def approve_plan(plan, user, note=None):
-    """Head Trainer duyệt -> Active. Giáo án Active cũ của cùng phân công (bản trước khi điều chỉnh) -> Completed."""
+    """Huấn luyện viên trưởng duyệt -> Active. Giáo án Active cũ của cùng phân công (bản trước khi điều chỉnh) -> Completed."""
     ensure_pending(plan)
     if plan.assignment.trainer_id == user.pk:  # tách quyền: người soạn không tự duyệt
         raise BusinessRuleError("Không tự duyệt giáo án do chính mình soạn.", "SELF_APPROVAL")
     check_plan_lock(plan)
-    now = timezone.now()
+    now = club_now()
     replaced = []
     for old in plan.assignment.plans.filter(status=P.ACTIVE).exclude(pk=plan.pk):
         cancel_sessions(TrainingSession.objects.filter(stage__plan=old, status=S.ASSIGNED), user,
@@ -401,7 +405,7 @@ def approve_plan(plan, user, note=None):
 def return_plan(plan, user, note):
     ensure_pending(plan)
     if not note:
-        raise BusinessRuleError("Cần ghi lý do trả về (ReviewNote).", "REVIEW_NOTE_REQUIRED")
+        raise BusinessRuleError("Vui lòng nhập lý do trả về.", "REVIEW_NOTE_REQUIRED")
     plan.status = P.DRAFT
     plan.review_note = note
     plan.save(update_fields=["status", "review_note"])
@@ -411,14 +415,14 @@ def return_plan(plan, user, note):
 
 def complete_plan(plan, user):
     if plan.status != P.ACTIVE:
-        raise BusinessRuleError("Chỉ kết thúc được giáo án đang Active.", "INVALID_STATUS")
+        raise BusinessRuleError("Chỉ hoàn tất được giáo án đang áp dụng.", "INVALID_STATUS")
     cancelled = cancel_sessions(TrainingSession.objects.filter(stage__plan=plan, status=S.ASSIGNED), user,
                                 f"Kết thúc giáo án #{plan.id}")
     plan.status = P.COMPLETED
     plan.save(update_fields=["status"])
     # Giai đoạn đã bắt đầu mà chưa chốt thì chốt luôn cùng giáo án (không gửi tổng kết riêng từng giai đoạn)
-    plan.stages.filter(closed_at__isnull=True, start_date__lte=date.today()).update(
-        closed_at=timezone.now(), closed_by=user)
+    plan.stages.filter(closed_at__isnull=True, start_date__lte=club_today()).update(
+        closed_at=club_now(), closed_by=user)
     log_action(user, "COMPLETE_TRAINING_PLAN", plan, {"CancelledSessionIDs": cancelled})
     owner_emails.plan_completed(plan)
     return plan
@@ -441,14 +445,14 @@ def revise_plan(plan, user):
     """Điều chỉnh giáo án (sau đánh giá buổi tập): chép thành bản Draft mới để sửa rồi gửi duyệt lại."""
     ensure_plan_owner(plan, user)
     if plan.status not in (P.ACTIVE, P.COMPLETED):
-        raise BusinessRuleError("Chỉ tạo bản điều chỉnh từ giáo án Active hoặc Completed.", "INVALID_STATUS")
+        raise BusinessRuleError("Chỉ tạo bản điều chỉnh từ giáo án đang áp dụng hoặc đã hoàn thành.", "INVALID_STATUS")
     if plan.assignment.plans.filter(status__in=(P.DRAFT, P.PENDING_APPROVAL)).exists():
         raise BusinessRuleError("Đã có một bản giáo án đang soạn / chờ duyệt cho ngựa này.", "DRAFT_EXISTS")
     copy = TrainingPlan.objects.create(
-        assignment=plan.assignment, goal=plan.goal, start_date=max(plan.start_date, date.today()),
-        end_date=plan.end_date if not plan.end_date or plan.end_date >= date.today() else None,
+        assignment=plan.assignment, goal=plan.goal, start_date=max(plan.start_date, club_today()),
+        end_date=plan.end_date if not plan.end_date or plan.end_date >= club_today() else None,
         overall_intensity=plan.overall_intensity, note=f"Điều chỉnh từ giáo án #{plan.id}",
-        created_at=timezone.now(),
+        created_at=club_now(),
     )
     for stage in plan.stages.all():
         end = stage.end_date
@@ -470,14 +474,14 @@ def revise_plan(plan, user):
 def _validate_session(stage, values, session=None):
     plan = stage.plan
     if plan.status != P.ACTIVE:
-        raise BusinessRuleError("Chỉ xếp buổi tập cho giáo án đang Active (đã được duyệt).", "PLAN_NOT_ACTIVE")
+        raise BusinessRuleError("Chỉ lập buổi tập cho giáo án đang áp dụng (đã được duyệt).", "PLAN_NOT_ACTIVE")
     horse = plan.assignment.horse
     ensure_horse_in_training(horse)
     session_date = values.get("session_date", getattr(session, "session_date", None))
     stage_end = stage.end_date or plan.end_date
     if session_date < stage.start_date or (stage_end and session_date > stage_end):
         raise ValidationError({"SessionDate": ["Ngày tập phải nằm trong thời gian của giai đoạn."]})
-    if session is None and session_date < date.today():
+    if session is None and session_date < club_today():
         raise ValidationError({"SessionDate": ["Không xếp buổi tập vào ngày đã qua."]})
     start_time = values.get("start_time", getattr(session, "start_time", None))
     end_time = values.get("end_time", getattr(session, "end_time", None))
@@ -513,11 +517,13 @@ def _check_rider_slot(values, session=None):
         values["sequence_no"] = (others.aggregate(m=Max("sequence_no"))["m"] or 0) + 1
     sequence = values.get("sequence_no") or getattr(session, "sequence_no", None)
     if others.filter(sequence_no=sequence).exists():
-        raise BusinessRuleError("Work Rider đã có buổi tập khác ở cùng ngày và cùng thứ tự (SequenceNo).",
+        raise BusinessRuleError("Kỵ sĩ tập luyện đã có buổi tập khác cùng ngày và cùng thứ tự buổi.",
                                 "RIDER_SLOT_TAKEN")
 
 
+@transaction.atomic
 def create_session(stage, user, values):
+    Horse.objects.select_for_update().get(pk=stage.plan.assignment.horse_id)
     horse, _ = _validate_session(stage, values)
     _resolve_people(horse, values)
     _check_rider_slot(values)
@@ -526,9 +532,10 @@ def create_session(stage, user, values):
     return session
 
 
+@horse_serialized
 def update_session(session, user, values):
     if session.status != S.ASSIGNED:
-        raise BusinessRuleError("Chỉ sửa được buổi tập chưa bắt đầu (Assigned).", "INVALID_STATUS")
+        raise BusinessRuleError("Chỉ chỉnh sửa được buổi tập chưa bắt đầu.", "INVALID_STATUS")
     stage = values.pop("stage", None) or session.stage
     if stage.plan_id != session.stage.plan_id:
         raise ValidationError({"TrainingPlanStageID": ["Chỉ chuyển sang giai đoạn khác trong cùng giáo án."]})
@@ -543,16 +550,17 @@ def update_session(session, user, values):
     return session
 
 
+@horse_serialized
 def start_session(session, user):
-    """Work Rider bấm bắt đầu khi ngựa ra sân (giống chấm công)."""
+    """kỵ sĩ tập luyện bấm bắt đầu khi ngựa ra sân (giống chấm công)."""
     if session.work_rider_id != user.pk:
-        raise BusinessRuleError("Chỉ Work Rider được giao mới bắt đầu buổi tập này.", "NOT_SESSION_RIDER")
+        raise BusinessRuleError("Chỉ kỵ sĩ tập luyện được phân công mới bắt đầu được buổi tập này.", "NOT_SESSION_RIDER")
     if session.status != S.ASSIGNED:
         raise BusinessRuleError("Buổi tập không ở trạng thái Assigned.", "INVALID_STATUS")
-    if session.session_date != date.today():
+    if session.session_date != club_today():
         raise BusinessRuleError("Chỉ bắt đầu buổi tập vào đúng ngày tập.", "WRONG_DAY")
     if session.stage.plan.status != P.ACTIVE:
-        raise BusinessRuleError("Giáo án của buổi tập không còn Active.", "PLAN_NOT_ACTIVE")
+        raise BusinessRuleError("Giáo án của buổi tập không còn được áp dụng.", "PLAN_NOT_ACTIVE")
     check_session_lock(session.horse, session.session_date, session.training_load)
     session.status = S.IN_PROGRESS
     session.save(update_fields=["status"])
@@ -567,37 +575,50 @@ def _result_for(session):
         return None
 
 
+@horse_serialized
 def record_result(session, user, values):
-    """Work Rider ghi kết quả -> buổi tập Completed."""
+    """kỵ sĩ tập luyện ghi kết quả -> buổi tập Completed."""
     if session.work_rider_id != user.pk:
-        raise BusinessRuleError("Chỉ Work Rider của buổi tập mới ghi kết quả.", "NOT_SESSION_RIDER")
+        raise BusinessRuleError("Chỉ kỵ sĩ tập luyện của buổi tập mới ghi được kết quả.", "NOT_SESSION_RIDER")
     if session.status != S.IN_PROGRESS:
-        raise BusinessRuleError("Cần bắt đầu buổi tập (In Progress) trước khi ghi kết quả.", "INVALID_STATUS")
+        raise BusinessRuleError("Vui lòng bắt đầu buổi tập trước khi ghi kết quả.", "INVALID_STATUS")
     result = _result_for(session)
     if result is None:
         result = TrainingResult(session=session)
+    end_time = values.pop("_end_time", None)          # kết thúc sớm: giờ kỵ sĩ ghi
     for attr, value in values.items():
         setattr(result, attr, value)
-    result.recorded_at = timezone.now()
+    result.recorded_at = club_now()
     result.save()
+    if result.early_end_reason == "Injury" and flows.has_flow3():
+        # Store the measured result and stop/report the same incident under the horse lock.
+        from apps.medical.services import training_incident
+        if end_time is not None:
+            session.end_time = max(end_time, session.start_time)
+            session.save(update_fields=["end_time"])
+        training_incident(session, user, result.early_end_note)
+        log_action(user, "RECORD_TRAINING_RESULT", session, {"TrainingResultID": result.id, "EarlyEndReason": "Injury"})
+        return result
     session.status = S.COMPLETED
-    if session.end_time is None:  # CHECK EndTime >= StartTime
-        session.end_time = max(timezone.now().time().replace(microsecond=0), session.start_time)
+    if end_time is not None:
+        session.end_time = max(end_time, session.start_time)
+    elif session.end_time is None:  # CHECK EndTime >= StartTime
+        session.end_time = max(club_now().time().replace(microsecond=0), session.start_time)
     session.save(update_fields=["status", "end_time"])
     log_action(user, "RECORD_TRAINING_RESULT", session, {"TrainingResultID": result.id})
     return result
 
 
 def add_substitute_observation(session, user, text):
-    """Substitute Trainer ghi nhận xét (bắt buộc với buổi do mình giám sát thay)."""
+    """huấn luyện viên giám sát thay thế ghi nhận xét (bắt buộc với buổi do mình giám sát thay)."""
     if session.substitute_trainer_id != user.pk:
-        raise BusinessRuleError("Chỉ Substitute Trainer của buổi tập mới ghi nhận xét này.", "NOT_SUBSTITUTE")
+        raise BusinessRuleError("Chỉ huấn luyện viên giám sát thay thế của buổi tập mới ghi được nhận xét này.", "NOT_SUBSTITUTE")
     if session.status not in (S.IN_PROGRESS, S.COMPLETED, S.CANCELLED):
         raise BusinessRuleError("Buổi tập chưa diễn ra.", "INVALID_STATUS")
     result = _result_for(session) or TrainingResult(session=session)
     result.substitute_observation = text
     if result.pk is None:
-        result.recorded_at = timezone.now()
+        result.recorded_at = club_now()
     result.save()
     log_action(user, "SUBSTITUTE_OBSERVATION", session)
     return result
@@ -607,8 +628,9 @@ def is_supervisor(session, user) -> bool:
     return user.pk == session.supervising_trainer_id
 
 
+@horse_serialized
 def stop_session(session, user, reason):
-    """Trainer đang giám sát (hoặc Head Trainer) dừng buổi tập khi ngựa có vấn đề -> Cancelled, báo ngay chủ ngựa."""
+    """Huấn luyện viên đang giám sát (hoặc Huấn luyện viên trưởng) dừng buổi tập khi ngựa có vấn đề -> Cancelled, báo ngay chủ ngựa."""
     _end_session(session, user, "STOP_TRAINING_SESSION", reason)
     owner_emails.session_stopped(session, reason)
     return session
@@ -631,7 +653,7 @@ def _end_session(session, user, action, reason):
 def mark_missed(session, user, reason=None):
     if session.status not in (S.ASSIGNED, S.IN_PROGRESS):
         raise BusinessRuleError("Buổi tập đã kết thúc.", "INVALID_STATUS")
-    if session.session_date > date.today():
+    if session.session_date > club_today():
         raise BusinessRuleError("Buổi tập chưa tới ngày, hãy hủy thay vì đánh vắng.", "NOT_YET")
     session.status = S.MISSED
     session.save(update_fields=["status"])
@@ -640,17 +662,17 @@ def mark_missed(session, user, reason=None):
 
 
 def review_session(session, user, values):
-    """Trainer phụ trách đánh giá buổi tập đã xong (Substitute không đánh giá)."""
+    """Huấn luyện viên phụ trách đánh giá buổi tập đã xong (Substitute không đánh giá)."""
     assignment = session.assignment
     if assignment.trainer_id != user.pk or assignment.status != TrainerHorseAssignment.Status.ACTIVE:
-        raise BusinessRuleError("Chỉ trainer đang phụ trách ngựa mới đánh giá buổi tập.", "NOT_ASSIGNED_TRAINER")
+        raise BusinessRuleError("Chỉ huấn luyện viên đang phụ trách ngựa mới đánh giá được buổi tập.", "NOT_ASSIGNED_TRAINER")
     if session.status != S.COMPLETED:
         raise BusinessRuleError("Chỉ đánh giá buổi tập đã hoàn thành.", "INVALID_STATUS")
     if session.reviews.exists():
         raise BusinessRuleError("Buổi tập này đã được đánh giá.", "ALREADY_REVIEWED")
     if values.get("adjustment_required") and not values.get("adjustment_note"):
         raise ValidationError({"AdjustmentNote": ["Cần ghi nội dung cần điều chỉnh."]})
-    review = TrainingReview.objects.create(session=session, trainer=user, review_date=timezone.now(), **values)
+    review = TrainingReview.objects.create(session=session, trainer=user, review_date=club_now(), **values)
     log_action(user, "REVIEW_TRAINING_SESSION", session,
                {"TrainingReviewID": review.id, "AdjustmentRequired": review.adjustment_required})
     return review
@@ -663,19 +685,19 @@ def close_stage(stage, user, summary_note=None):
     plan = stage.plan
     if not (user.has_perm("TRAINING_PLAN_APPROVE") or (
             plan.assignment.trainer_id == user.pk and plan.assignment.status == TrainerHorseAssignment.Status.ACTIVE)):
-        raise PermissionDenied("Chỉ trainer đang phụ trách ngựa hoặc Head Trainer mới chốt giai đoạn.")
+        raise PermissionDenied("Chỉ huấn luyện viên đang phụ trách ngựa hoặc Huấn luyện viên trưởng mới chốt được giai đoạn.")
     if plan.status not in (P.ACTIVE, P.COMPLETED):
-        raise BusinessRuleError("Chỉ chốt giai đoạn của giáo án đang Active hoặc đã Completed.", "INVALID_STATUS")
+        raise BusinessRuleError("Chỉ chốt được giai đoạn của giáo án đang áp dụng hoặc đã hoàn thành.", "INVALID_STATUS")
     if stage.closed_at is not None:
         raise BusinessRuleError("Giai đoạn này đã được chốt.", "ALREADY_CLOSED")
-    if stage.start_date > date.today():
+    if stage.start_date > club_today():
         raise BusinessRuleError("Giai đoạn chưa bắt đầu nên chưa chốt được.", "NOT_STARTED")
     pending = stage.sessions.filter(status__in=(S.ASSIGNED, S.IN_PROGRESS)).count()
     if pending:
         raise BusinessRuleError(
             f"Giai đoạn còn {pending} buổi tập chưa xong (Assigned / In Progress): hãy hoàn thành, hủy "
             "hoặc đánh vắng trước khi chốt.", "SESSIONS_PENDING")
-    stage.closed_at = timezone.now()
+    stage.closed_at = club_now()
     stage.closed_by = user
     stage.summary_note = (summary_note or "").strip() or None
     stage.save(update_fields=["closed_at", "closed_by", "summary_note"])

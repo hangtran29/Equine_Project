@@ -119,6 +119,10 @@ export function normalizeHorse(value: unknown): Horse {
     healthAssessment: health,
     archiveReason: typeof record.ArchiveReason === 'string' ? record.ArchiveReason : undefined,
     archivedAt: typeof record.ArchivedAt === 'string' ? record.ArchivedAt : undefined,
+    leftDate: typeof record.LeftDate === 'string' ? record.LeftDate : undefined,
+    declaredHealth: typeof record.DeclaredHealth === 'string' ? record.DeclaredHealth : undefined,
+    medicalHistory: typeof record.MedicalHistory === 'string' ? record.MedicalHistory : undefined,
+    ownerNote: typeof record.OwnerNote === 'string' ? record.OwnerNote : undefined,
     currentStall: record.CurrentStall && typeof record.CurrentStall === 'object'
       ? record.CurrentStall as Horse['currentStall']
       : undefined,
@@ -160,6 +164,9 @@ export interface HorseProfileInput {
   damName: string;
   clubId?: string;
   ownerUserId?: string;
+  declaredHealth?: string;
+  medicalHistory?: string;
+  ownerNote?: string;
 }
 
 function toProfilePayload(input: Partial<HorseProfileInput>, create = false): ApiRecord {
@@ -167,6 +174,7 @@ function toProfilePayload(input: Partial<HorseProfileInput>, create = false): Ap
     ['name', 'HorseName'], ['breed', 'Breed'], ['dateOfBirth', 'DateOfBirth'],
     ['coatColor', 'CoatColor'], ['registrationNumber', 'PassportNumber'],
     ['microchipNumber', 'MicrochipNumber'], ['sireName', 'SireName'], ['damName', 'DamName'],
+    ['declaredHealth', 'DeclaredHealth'], ['medicalHistory', 'MedicalHistory'], ['ownerNote', 'OwnerNote'],
   ];
   const payload: ApiRecord = {};
   fields.forEach(([source, target]) => {
@@ -496,6 +504,9 @@ export interface ExaminationInput {
   examDate: string;
   weightKg?: number;
   heightCm?: number;
+  bodyTemperatureC?: number;
+  heartRateBpm?: number;
+  respiratoryRate?: number;
   symptoms: string;
   diagnosis: string;
   treatmentPlan: string;
@@ -550,6 +561,9 @@ function mapMedicalRecord(value: unknown): MedicalRecord {
     examDate: typeof record.ExamDate === 'string' ? record.ExamDate : '',
     weightKg: record.WeightKg == null || !Number.isFinite(Number(record.WeightKg)) ? undefined : Number(record.WeightKg),
     heightCm: record.HeightCm == null || !Number.isFinite(Number(record.HeightCm)) ? undefined : Number(record.HeightCm),
+    bodyTemperatureC: record.BodyTemperatureC == null || !Number.isFinite(Number(record.BodyTemperatureC)) ? undefined : Number(record.BodyTemperatureC),
+    heartRateBpm: record.HeartRateBpm == null || !Number.isFinite(Number(record.HeartRateBpm)) ? undefined : Number(record.HeartRateBpm),
+    respiratoryRate: record.RespiratoryRate == null || !Number.isFinite(Number(record.RespiratoryRate)) ? undefined : Number(record.RespiratoryRate),
     symptoms: typeof record.Symptoms === 'string' ? record.Symptoms : '',
     diagnosis: typeof record.Diagnosis === 'string' ? record.Diagnosis : '',
     treatmentPlan: typeof record.TreatmentPlan === 'string' ? record.TreatmentPlan : '',
@@ -592,6 +606,10 @@ function examinationPayload(input: ExaminationInput): ApiRecord {
     ...(input.examDate ? { ExamDate: input.examDate } : {}),
     WeightKg: input.weightKg ?? null,
     HeightCm: input.heightCm ?? null,
+    ...('bodyTemperatureC' in input ? { BodyTemperatureC: input.bodyTemperatureC ?? null } : {}),
+    ...('heartRateBpm' in input ? { HeartRateBpm: input.heartRateBpm ?? null } : {}),
+    ...('respiratoryRate' in input ? { RespiratoryRate: input.respiratoryRate ?? null } : {}),
+
     Symptoms: input.symptoms,
     Diagnosis: input.diagnosis,
     TreatmentPlan: input.treatmentPlan,

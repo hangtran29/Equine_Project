@@ -3,6 +3,8 @@ import { registerOwner } from '../../api/registrationApi.js'
 import { getClubs } from '../../api/horseApi.ts'
 import { googleClientId, loadGoogleIdentity, signInWithGoogle } from '../../api/googleAuthApi.ts'
 import { Link } from 'react-router-dom'
+import { requestPasswordReset } from '../../flow1/api.js'
+import { checkAddress, checkEmail, checkFullName, checkPhone } from '../../utils/validation.js'
 import './LoginScreen.css'
 
 // Biểu tượng nét mảnh đặt đầu mỗi ô nhập.
@@ -15,20 +17,34 @@ const ICONS = {
   club: <><path d="M3 21h18M5 21V10l7-5 7 5v11" /><path d="M10 21v-5h4v5" /></>,
 }
 
+// Kiểm tra form bằng code (form đặt noValidate): lỗi của ô nào hiện chữ đỏ ngay dưới ô đó, theo ngôn ngữ đang chọn,
+// thay cho bong bóng mặc định của trình duyệt (luôn theo ngôn ngữ của trình duyệt). Mọi ô sai báo cùng lúc.
+const need = (value, message) => () => (String(value ?? '').trim() ? '' : message)
+const firstError = (...checks) => { for (const check of checks) { const message = check(); if (message) return message } return '' }
+/** rules: { tên ô: [các hàm kiểm tra] } -> { tên ô: câu lỗi đầu tiên } (chỉ các ô sai) */
+const fieldErrorsOf = (rules) => Object.fromEntries(Object.entries(rules).map(([k, checks]) => [k, firstError(...checks)]).filter(([, m]) => m))
+const emailChecks = (email) => [need(email, 'Vui lòng nhập email.'), () => checkEmail(String(email).trim())]
+const nameChecks = (name) => [need(name, 'Vui lòng nhập họ và tên.'), () => checkFullName(name)]
+const phoneChecks = (phone, empty = 'Vui lòng nhập số điện thoại.') => [need(phone, empty), () => checkPhone(String(phone).trim())]
+const addressChecks = (address) => [need(address, 'Vui lòng nhập địa chỉ.'), () => checkAddress(address)]
+
 function FieldIcon({ name }) {
   return <svg className="auth-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"
     strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{ICONS[name]}</svg>
 }
 
 // Ô nhập tối giản: nhãn ẩn cho trình đọc màn hình, chữ gợi ý hiện trong ô, biểu tượng ở đầu ô.
-function Field({ label, name, type = 'text', value, onChange, autoComplete, minLength, maxLength, icon = 'user', className = '', children }) {
-  return <label className={`auth-field ${className}`}>
-    <span className="auth-sr">{label}</span>
-    <FieldIcon name={icon} />
-    <input name={name} type={type} value={value} onChange={onChange} autoComplete={autoComplete} minLength={minLength}
-      maxLength={maxLength} placeholder={label} required />
-    {children}
-  </label>
+function Field({ label, name, type = 'text', value, onChange, autoComplete, minLength, maxLength, icon = 'user', className = '', error, children }) {
+  return <div className={`auth-field-box ${className}`}>
+    <label className={`auth-field ${error ? 'auth-field-invalid' : ''}`}>
+      <span className="auth-sr">{label}</span>
+      <FieldIcon name={icon} />
+      <input name={name} type={type} value={value} onChange={onChange} autoComplete={autoComplete} minLength={minLength}
+        maxLength={maxLength} placeholder={label} required aria-invalid={Boolean(error)} />
+      {children}
+    </label>
+    {error && <p className="auth-field-error" role="alert">{error}</p>}
+  </div>
 }
 
 function PasswordField(props) {
@@ -38,17 +54,6 @@ function PasswordField(props) {
       <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" />{visible && <path d="m3 3 18 18" />}</svg>
     </button>
   </Field>
-}
-
-function ClubSelect({ value, onChange, clubs, loading, error }) {
-  return <label className="auth-field">
-    <span className="auth-sr">Câu lạc bộ</span>
-    <FieldIcon name="club" />
-    <select required name="clubId" value={value} onChange={onChange} disabled={loading || Boolean(error)}>
-      <option value="">{loading ? 'Đang tải câu lạc bộ…' : 'Chọn câu lạc bộ'}</option>
-      {clubs.map((club) => <option key={club.id} value={club.id}>{club.name}</option>)}
-    </select>
-  </label>
 }
 
 const GOOGLE_G = <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
@@ -104,10 +109,17 @@ export default function LoginScreen({ onLogin, error = '', busy = false, onRegis
   const [clubsError, setClubsError] = useState('')
   const [clubRetry, setClubRetry] = useState(0)
   const [formError, setFormError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState({})
+  // kiểm tra các ô; còn ô sai thì hiện lỗi dưới từng ô và trả về false
+  const validate = (rules) => { const found = fieldErrorsOf(rules); setFieldErrors(found); return !Object.keys(found).length }
+  const clearField = (name) => setFieldErrors((e) => (e[name] ? { ...e, [name]: undefined } : e))
+  const [forgotEmail, setForgotEmail] = useState('')
+  const [resetLink, setResetLink] = useState('')
   const [notice, setNotice] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const formRef = useRef(null)
-  const needsClubs = mode === 'google'
+  // CLB duy nhất (EquiTrack): tự gán câu lạc bộ đang hoạt động đầu tiên khi đăng ký
+  const needsClubs = mode === 'google' || mode === 'register'
   const pending = busy || submitting
 
   useEffect(() => {
@@ -129,8 +141,10 @@ export default function LoginScreen({ onLogin, error = '', busy = false, onRegis
     if (pending) return
     setChanged(true)
     setFormError('')
+    setFieldErrors({})
     setNotice('')
-    if (next === 'google' && !clubs.length) setClubsLoading(true)
+    setResetLink('')
+    if ((next === 'google' || next === 'register') && !clubs.length) setClubsLoading(true)
     setMode(next)
   }
 
@@ -138,6 +152,7 @@ export default function LoginScreen({ onLogin, error = '', busy = false, onRegis
     const { name, value } = event.target
     setter((previous) => ({ ...previous, [name]: value }))
     setFormError('')
+    clearField(name)
     if (name === 'confirmPassword' || name === 'password') {
       formRef.current?.elements.confirmPassword?.setCustomValidity('')
     }
@@ -146,8 +161,9 @@ export default function LoginScreen({ onLogin, error = '', busy = false, onRegis
   async function submitLogin(event) {
     event.preventDefault()
     if (pending) return
-    setFormError('')
     setNotice('')
+    setFormError('')
+    if (!validate({ email: emailChecks(login.email), password: [need(login.password, 'Vui lòng nhập mật khẩu.')] })) return
     setSubmitting(true)
     try { await onLogin(login.email.trim(), login.password) }
     catch (cause) { setFormError(cause instanceof Error ? cause.message : 'Không thể đăng nhập. Vui lòng thử lại.') }
@@ -157,17 +173,14 @@ export default function LoginScreen({ onLogin, error = '', busy = false, onRegis
   async function submitRegistration(event) {
     event.preventDefault()
     if (pending) return
-    if (!registration.fullName.trim()) { setFormError('Vui lòng nhập họ và tên.'); return }
-    if (registration.password !== registration.confirmPassword) {
-      const confirm = formRef.current.elements.confirmPassword
-      confirm.setCustomValidity('Mật khẩu xác nhận chưa khớp.')
-      confirm.reportValidity()
-      return
-    }
+    const r = registration
     setFormError('')
+    if (!validate({ fullName: nameChecks(r.fullName), email: emailChecks(r.email), phone: phoneChecks(r.phone), address: addressChecks(r.address),
+      password: [need(r.password, 'Vui lòng nhập mật khẩu.'), () => (r.password.length < 6 ? 'Mật khẩu phải có ít nhất 6 ký tự.' : '')],
+      confirmPassword: [need(r.confirmPassword, 'Vui lòng xác nhận mật khẩu.'), () => (r.password !== r.confirmPassword ? 'Mật khẩu xác nhận chưa khớp.' : '')] })) return
     setSubmitting(true)
     try {
-      await onRegister({ fullName: registration.fullName.trim(), email: registration.email.trim(), phone: registration.phone.trim(), address: registration.address.trim(), password: registration.password })
+      await onRegister({ fullName: registration.fullName.trim(), email: registration.email.trim(), phone: registration.phone.trim(), address: registration.address.trim(), clubId: clubs[0]?.id, password: registration.password })
       setLogin({ email: registration.email.trim(), password: '' })
       setRegistration(emptyRegistration)
       setChanged(true)
@@ -196,13 +209,30 @@ export default function LoginScreen({ onLogin, error = '', busy = false, onRegis
     finally { setSubmitting(false) }
   }
 
+  async function submitForgot(event) {
+    event.preventDefault()
+    if (pending) return
+    setFormError('')
+    setNotice('')
+    setSubmitting(true)
+    try {
+      const result = await requestPasswordReset(forgotEmail.trim())
+      setResetLink(result?.ResetLink || '')
+      if (result?.ContactManager) { setNotice(result.detail); return }
+      if (result?.AccountFound === false) { setFormError('Chưa có tài khoản nào dùng email này. Vui lòng kiểm tra lại email hoặc đăng ký tài khoản chủ ngựa.'); return }
+      setNotice('Chúng tôi đã gửi liên kết đặt lại mật khẩu đến địa chỉ email của bạn. Vui lòng kiểm tra hộp thư đến và nhấn vào liên kết để tiếp tục tạo mật khẩu mới.')
+    } catch (cause) { setFormError(cause instanceof Error ? cause.message : 'Không gửi được yêu cầu. Vui lòng thử lại.') }
+    finally { setSubmitting(false) }
+  }
+
   async function submitGoogleSignup(event) {
     event.preventDefault()
     if (pending) return
     setFormError('')
+    if (!validate({ fullName: nameChecks(google.fullName), phone: phoneChecks(google.phone), address: addressChecks(google.address) })) return
     setSubmitting(true)
     try {
-      const result = await signInWithGoogle(google.credential, google)
+      const result = await signInWithGoogle(google.credential, { ...google, clubId: google.clubId || clubs[0]?.id || '' })
       if (result.status === 'signed-in') enterApp()
     } catch (cause) { setFormError(cause instanceof Error ? cause.message : 'Không thể tạo tài khoản. Vui lòng thử lại.') }
     finally { setSubmitting(false) }
@@ -232,36 +262,47 @@ export default function LoginScreen({ onLogin, error = '', busy = false, onRegis
       <p className="auth-subtitle">Racehorse Training &amp; Management System</p>
       <span className="auth-rule" aria-hidden="true" />
 
-      {mode === 'login' && <form ref={formRef} key="login" className="auth-form auth-login" onSubmit={submitLogin} aria-label="Đăng nhập" aria-busy={pending}>
-        <Field label="Email" icon="mail" name="email" type="email" autoComplete="username" value={login.email} onChange={update(setLogin)} maxLength={254} />
-        <PasswordField label="Mật khẩu" name="password" autoComplete="current-password" value={login.password} onChange={update(setLogin)} />
+      {mode === 'login' && <form ref={formRef} key="login" className="auth-form auth-login" onSubmit={submitLogin} noValidate aria-label="Đăng nhập" aria-busy={pending}>
+        <Field label="Email" icon="mail" name="email" type="email" autoComplete="username" value={login.email} onChange={update(setLogin)} maxLength={254} error={fieldErrors.email} />
+        <PasswordField label="Mật khẩu" name="password" autoComplete="current-password" value={login.password} onChange={update(setLogin)} error={fieldErrors.password} />
+        <p className="auth-forgot"><button type="button" onClick={() => { setForgotEmail(login.email); switchMode('forgot') }} disabled={pending}>Quên mật khẩu?</button></p>
         {feedback}
         <button className="auth-submit" type="submit" disabled={pending}>{pending ? 'Đang đăng nhập…' : <>Đăng nhập <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M4 12h16M14 6l6 6-6 6" /></svg></>}</button>
         <GoogleButton onCredential={handleGoogle} onUnavailable={(message) => { setNotice(''); setFormError(message) }} disabled={pending} />
         <p className="auth-switch">Chưa có tài khoản? <button type="button" onClick={() => switchMode('register')} disabled={pending}>Đăng ký chủ ngựa</button></p>
       </form>}
 
-      {mode === 'register' && <form ref={formRef} key="register" className="auth-form auth-form-wide auth-register" onSubmit={submitRegistration} aria-label="Đăng ký chủ ngựa" aria-busy={pending}>
+      {mode === 'register' && <form ref={formRef} key="register" className="auth-form auth-form-wide auth-register" onSubmit={submitRegistration} noValidate aria-label="Đăng ký chủ ngựa" aria-busy={pending}>
         <p className="auth-heading">Đăng ký tài khoản chủ ngựa</p>
         <div className="auth-grid">
-          <Field label="Họ và tên" name="fullName" autoComplete="name" value={registration.fullName} onChange={update(setRegistration)} maxLength={150} />
-          <Field label="Email" icon="mail" name="email" type="email" autoComplete="email" value={registration.email} onChange={update(setRegistration)} maxLength={254} />
-          <Field label="Số điện thoại" icon="phone" name="phone" type="tel" autoComplete="tel" value={registration.phone} onChange={update(setRegistration)} maxLength={20} />
-          <Field label="Địa chỉ" icon="pin" name="address" autoComplete="street-address" value={registration.address} onChange={update(setRegistration)} maxLength={255} />
-          <PasswordField className="auth-field-wide" label="Mật khẩu (ít nhất 6 ký tự)" name="password" autoComplete="new-password" value={registration.password} onChange={update(setRegistration)} minLength={6} />
-          <PasswordField className="auth-field-wide" label="Xác nhận mật khẩu" name="confirmPassword" autoComplete="new-password" value={registration.confirmPassword} onChange={update(setRegistration)} minLength={6} />
+          <Field label="Họ và tên" name="fullName" autoComplete="name" value={registration.fullName} onChange={update(setRegistration)} maxLength={150} error={fieldErrors.fullName} />
+          <Field label="Email" icon="mail" name="email" type="email" autoComplete="email" value={registration.email} onChange={update(setRegistration)} maxLength={254} error={fieldErrors.email} />
+          <Field label="Số điện thoại" icon="phone" name="phone" type="tel" autoComplete="tel" value={registration.phone} onChange={update(setRegistration)} maxLength={20} error={fieldErrors.phone} />
+          <Field label="Địa chỉ" icon="pin" name="address" autoComplete="street-address" value={registration.address} onChange={update(setRegistration)} maxLength={255} error={fieldErrors.address} />
+          <PasswordField className="auth-field-wide" label="Mật khẩu (ít nhất 6 ký tự)" name="password" autoComplete="new-password" value={registration.password} onChange={update(setRegistration)} minLength={6} error={fieldErrors.password} />
+          <PasswordField className="auth-field-wide" label="Xác nhận mật khẩu" name="confirmPassword" autoComplete="new-password" value={registration.confirmPassword} onChange={update(setRegistration)} minLength={6} error={fieldErrors.confirmPassword} />
         </div>
         {feedback}
         <button className="auth-submit" type="submit" disabled={pending}>{pending ? 'Đang đăng ký…' : 'Tạo tài khoản'}</button>
         <p className="auth-switch">Đã có tài khoản? <button type="button" onClick={() => switchMode('login')} disabled={pending}>Đăng nhập</button></p>
       </form>}
 
-      {mode === 'google' && <form ref={formRef} key="google" className="auth-form" onSubmit={submitGoogleSignup} aria-label="Hoàn tất đăng ký bằng Google" aria-busy={pending}>
+      {mode === 'forgot' && <form ref={formRef} key="forgot" className="auth-form" onSubmit={submitForgot} aria-label="Quên mật khẩu" aria-busy={pending}>
+        <h2 className="auth-page-title">Quên mật khẩu</h2>
+        <p className="auth-heading">Vui lòng nhập email đã đăng ký để thiết lập lại mật khẩu.</p>
+        <Field label="Email" icon="mail" name="email" type="email" autoComplete="username" value={forgotEmail} onChange={(e) => { setForgotEmail(e.target.value); setFormError('') }} maxLength={254} />
+        {feedback}
+        {resetLink && <p className="auth-feedback auth-success" role="status">Máy chủ chưa cấu hình gửi email nên thư chỉ được in ở cửa sổ backend. Đường link đặt lại mật khẩu:{' '}
+          <a href={resetLink} style={{ fontWeight: 700, color: 'inherit' }}>Đặt mật khẩu mới</a></p>}
+        <button className="auth-submit" type="submit" disabled={pending}>{pending ? 'Đang gửi…' : 'Gửi liên kết đặt lại'}</button>
+        <p className="auth-switch"><button type="button" onClick={() => switchMode('login')} disabled={pending}>Quay lại đăng nhập</button></p>
+      </form>}
+
+      {mode === 'google' && <form ref={formRef} key="google" className="auth-form" onSubmit={submitGoogleSignup} noValidate aria-label="Hoàn tất đăng ký bằng Google" aria-busy={pending}>
         <p className="auth-heading">Hoàn tất tài khoản chủ ngựa cho <b>{google.email}</b></p>
-        <Field label="Họ và tên" name="fullName" autoComplete="name" value={google.fullName} onChange={update(setGoogle)} maxLength={150} />
-        <Field label="Số điện thoại" icon="phone" name="phone" type="tel" autoComplete="tel" value={google.phone} onChange={update(setGoogle)} maxLength={20} />
-        <Field label="Địa chỉ" icon="pin" name="address" autoComplete="street-address" value={google.address} onChange={update(setGoogle)} maxLength={255} />
-        <ClubSelect value={google.clubId} onChange={update(setGoogle)} clubs={clubs} loading={clubsLoading} error={clubsError} />
+        <Field label="Họ và tên" name="fullName" autoComplete="name" value={google.fullName} onChange={update(setGoogle)} maxLength={150} error={fieldErrors.fullName} />
+        <Field label="Số điện thoại" icon="phone" name="phone" type="tel" autoComplete="tel" value={google.phone} onChange={update(setGoogle)} maxLength={20} error={fieldErrors.phone} />
+        <Field label="Địa chỉ" icon="pin" name="address" autoComplete="street-address" value={google.address} onChange={update(setGoogle)} maxLength={255} error={fieldErrors.address} />
         {clubProblem}
         {feedback}
         <button className="auth-submit" type="submit" disabled={pending || noClub}>{pending ? 'Đang tạo…' : 'Tạo tài khoản'}</button>

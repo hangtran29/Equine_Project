@@ -1,8 +1,14 @@
 from django.urls import path
 
 from . import views
+from . import injuries, attachments
 
 urlpatterns = [
+    path("horses/<int:horse_id>/injury-markers", injuries.MarkerListView.as_view()),
+    path("injury-markers/<int:marker_id>", injuries.MarkerDetailView.as_view()),
+    path("injury-markers/<int:marker_id>/assessments", injuries.AssessmentView.as_view()),
+    path("horses/<int:horse_id>/health-report-attachments", attachments.AttachmentUploadView.as_view()),
+    path("health-report-attachments/<int:attachment_id>/file", attachments.AttachmentFileView.as_view()),
     # Lịch trực bác sĩ thú y
     path("vet-duty-shifts", views.VetDutyShiftListView.as_view()),
     path("vet-duty-shifts/now", views.VetOnDutyView.as_view()),

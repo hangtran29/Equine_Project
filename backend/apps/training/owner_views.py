@@ -93,7 +93,7 @@ class OwnerTrainingSessionListView(APIView):
 
 
 class OwnerTrainingSessionDetailView(APIView):
-    """GET /api/owner/training-sessions/<id> - thêm tốc độ, nhịp tim, hồi phục, nhận xét rider, video, nhận xét trainer."""
+    """GET /api/owner/training-sessions/<id> - thêm tốc độ, nhịp tim, hồi phục, nhận xét rider, video, nhận xét huấn luyện viên."""
 
     permission_classes = [HasAnyPermission(OWNER_VIEW)]
 
@@ -101,5 +101,5 @@ class OwnerTrainingSessionDetailView(APIView):
         session = summaries.visible_sessions(TrainingSession.objects.filter(
             pk=session_id, stage__plan__assignment__horse__owner=request.user)).first()
         if session is None:
-            raise NotFound("Không tìm thấy buổi tập (hoặc buổi tập chưa được trainer đánh giá).")
+            raise NotFound("Không tìm thấy buổi tập hoặc buổi tập chưa được huấn luyện viên đánh giá.")
         return Response(summaries.session_detail(session, summaries.end_reasons([session.id])))

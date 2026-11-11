@@ -5,7 +5,7 @@ from django.utils import timezone
 
 
 def seed_demo(club):
-    """Chỉ tạo khi CLB chưa có dữ liệu y tế nào (chạy lại không trùng)."""
+    """Chỉ tạo khi câu lạc bộ chưa có dữ liệu y tế nào (chạy lại không trùng)."""
     from apps.accounts.models import User
     from apps.horses.models import Horse
 
@@ -25,7 +25,7 @@ def seed_demo(club):
                                vaccination_date=today + timedelta(days=5), status="Scheduled")
     MedicalSchedule.objects.create(horse=others[0] if others else first, vet=None, schedule_type="Farrier",
                                    scheduled_date=today + timedelta(days=3), status="Scheduled",
-                                   note="Thợ đóng móng ngoài CLB")
+                                   note="Thợ đóng móng ngoài câu lạc bộ")
     if groom is not None and others:
         HealthReport.objects.create(horse=others[0], reported_by=groom, reported_at=timezone.now(), severity="Normal",
                                     description="Chân sau phải hơi sưng sau khi tắm, ăn uống bình thường")

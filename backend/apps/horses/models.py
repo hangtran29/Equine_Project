@@ -9,6 +9,7 @@ from django.db import models
 from django.utils import timezone
 
 from apps.accounts.models import Club
+from apps.core.validators import ascii_code
 
 
 class Horse(models.Model):
@@ -46,10 +47,10 @@ class Horse(models.Model):
     gender = models.CharField(max_length=10, choices=Gender.choices, null=True, blank=True, db_column="Gender")
     sire_name = models.CharField(max_length=100, null=True, blank=True, db_column="SireName")
     dam_name = models.CharField(max_length=100, null=True, blank=True, db_column="DamName")
-    microchip_number = models.CharField(max_length=30, null=True, blank=True, db_column="MicrochipNumber")
-    passport_number = models.CharField(max_length=50, null=True, blank=True, db_column="PassportNumber")
+    microchip_number = models.CharField(max_length=30, null=True, blank=True, validators=[ascii_code], db_column="MicrochipNumber")
+    passport_number = models.CharField(max_length=50, null=True, blank=True, validators=[ascii_code], db_column="PassportNumber")
 
-    horse_code = models.CharField(max_length=30, null=True, blank=True, db_column="HorseCode")
+    horse_code = models.CharField(max_length=30, null=True, blank=True, validators=[ascii_code], db_column="HorseCode")
     verified_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.DO_NOTHING, null=True, blank=True,
         db_column="VerifiedBy", related_name="+",
@@ -70,6 +71,12 @@ class Horse(models.Model):
         db_column="ArchivedBy", related_name="+",
     )
     archive_reason = models.CharField(max_length=500, null=True, blank=True, db_column="ArchiveReason")
+    left_date = models.DateField(null=True, blank=True, db_column="LeftDate")   # ngày ngựa rời CLB (khi lưu trữ)
+
+    # Chủ ngựa tự khai lúc đăng ký (tham khảo cho bác sĩ thú y khi khám lâm sàng, không bắt buộc)
+    declared_health = models.CharField(max_length=1000, null=True, blank=True, db_column="DeclaredHealth")
+    medical_history = models.CharField(max_length=1000, null=True, blank=True, db_column="MedicalHistory")
+    owner_note = models.CharField(max_length=1000, null=True, blank=True, db_column="OwnerNote")
 
     created_at = models.DateTimeField(default=timezone.now, db_column="CreatedAt")
     updated_at = models.DateTimeField(default=timezone.now, db_column="UpdatedAt")
@@ -215,9 +222,10 @@ class Stall(models.Model):
 
     id = models.AutoField(primary_key=True, db_column="StallID")
     club = models.ForeignKey(Club, on_delete=models.DO_NOTHING, db_column="ClubID", related_name="stalls")
-    stall_number = models.CharField(max_length=30, db_column="StallNumber")
+    stall_number = models.CharField(max_length=30, validators=[ascii_code], db_column="StallNumber")
     stall_type = models.CharField(max_length=50, null=True, blank=True, db_column="StallType")
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.AVAILABLE, db_column="Status")
+    maintenance_until = models.DateField(null=True, blank=True, db_column="MaintenanceUntil")  # dự kiến xong bảo trì
 
     class Meta:
         managed = False

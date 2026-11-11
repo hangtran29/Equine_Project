@@ -9,7 +9,7 @@ const fieldLabels: Record<string, string> = {
   FullName: 'Họ tên', Email: 'Email', Phone: 'Số điện thoại', Address: 'Địa chỉ', Password: 'Mật khẩu',
   HorseName: 'Tên ngựa', OwnerID: 'Chủ ngựa', ClubID: 'Câu lạc bộ', HorseCode: 'Mã ngựa',
   Breed: 'Giống', Gender: 'Giới tính', DateOfBirth: 'Ngày sinh', CoatColor: 'Màu lông',
-  SireName: 'Ngựa cha', DamName: 'Ngựa mẹ', MicrochipNumber: 'Số microchip', PassportNumber: 'Số hộ chiếu',
+  SireName: 'Ngựa cha', DamName: 'Ngựa mẹ', MicrochipNumber: 'Số microchip', PassportNumber: 'Số hộ chiếu (UELN)',
   StallID: 'Ô chuồng', Reason: 'Lý do', ManagerNote: 'Ghi chú quản lý', ReviewNote: 'Nhận xét',
   MedicineName: 'Tên thuốc', Dose: 'Liều dùng', Route: 'Đường dùng', StartDate: 'Ngày bắt đầu',
   EndDate: 'Ngày kết thúc', WithdrawalUntil: 'Ngưng thuốc đến', Note: 'Ghi chú',
@@ -99,6 +99,8 @@ function errorMessage(value: unknown, status: number): {
 async function send(path: string, init: RequestInit, authenticated: boolean): Promise<Response> {
   const headers = new Headers(init.headers);
   headers.set('Accept', 'application/json');
+  // Ngôn ngữ giao diện: backend dịch thông báo, lỗi sang tiếng Anh khi chọn EN
+  try { if (localStorage.getItem('equi.lang') === 'en') headers.set('X-Language', 'en'); } catch { /* bỏ qua */ }
   if (init.body instanceof FormData) headers.delete('Content-Type');
   else if (init.body !== undefined) headers.set('Content-Type', 'application/json');
   const token = authenticated ? getAccessToken() : null;

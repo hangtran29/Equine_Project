@@ -108,6 +108,8 @@ class User(AbstractBaseUser):
     phone = models.CharField(max_length=20, null=True, blank=True, db_column="Phone")
     address = models.CharField(max_length=255, null=True, blank=True, db_column="Address")
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE, db_column="Status")
+    # mật khẩu tạm do Manager cấp: phải đổi ở lần đăng nhập đầu
+    must_change_password = models.BooleanField(default=False, db_column="MustChangePassword")
     created_at = models.DateTimeField(default=timezone.now, db_column="CreatedAt")
 
     last_login = None

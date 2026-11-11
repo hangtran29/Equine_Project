@@ -6,6 +6,7 @@ Sinh việc chăm sóc theo chỉ tiêu cho mọi CLB đang hoạt động (ch�
 
 Không chạy lệnh này thì việc vẫn được sinh khi Groom / Head Trainer mở danh sách việc hoặc chuông thông báo.
 """
+from apps.core.clubtime import now as club_now, today as club_today
 from datetime import date
 
 from django.core.management.base import BaseCommand
@@ -22,6 +23,6 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         for club in Club.objects.filter(status="Active"):
-            for row in generate_range(club, date.today(), options["days"]):
+            for row in generate_range(club, club_today(), options["days"]):
                 self.stdout.write(f"{club.club_name} {row['Date']}: +{row['Created']} việc, "
-                                  f"-{row['Removed']} việc cũ, {row['Unassigned']} chưa có Groom")
+                                  f"-{row['Removed']} việc cũ, {row['Unassigned']} chưa có người chăm sóc ngựa")

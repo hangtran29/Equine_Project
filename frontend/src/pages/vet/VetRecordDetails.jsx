@@ -64,6 +64,7 @@ export default function VetRecordDetails({ record, canAmend = false }) {
     ]} /></section>
     <section className="vet-clinical-section"><h3>Triệu chứng và kiểm tra</h3><Details rows={[
       ['Cân nặng', record.weightKg == null ? '' : `${record.weightKg} kg`], ['Chiều cao', record.heightCm == null ? '' : `${record.heightCm} cm`],
+      ['Thân nhiệt (°C)', record.bodyTemperatureC], ['Nhịp tim (lần/phút)', record.heartRateBpm], ['Nhịp thở (lần/phút)', record.respiratoryRate],
       ['Triệu chứng / lý do khám', record.symptoms], ['Kết quả kiểm tra / ghi chú', record.note],
     ]} /></section>
     <section className="vet-clinical-section"><h3>Chẩn đoán và chấn thương</h3><Details rows={[

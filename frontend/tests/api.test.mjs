@@ -22,7 +22,8 @@ const registration = await import(pathToFileURL(join(temp, 'registrationApi.mjs'
 const vet = await import(pathToFileURL(join(temp, 'vetApi.mjs')))
 const care = await import(pathToFileURL(join(temp, 'careApi.mjs')))
 const google = await import(pathToFileURL(join(temp, 'googleAuthApi.mjs')))
-await writeFile(join(temp, 'vetDomain.mjs'), await readFile(new URL('../src/pages/vet/vetDomain.js', import.meta.url), 'utf8'))
+await writeFile(join(temp, 'locale.mjs'), await readFile(new URL('../src/i18n/locale.js', import.meta.url), 'utf8'))
+await writeFile(join(temp, 'vetDomain.mjs'), (await readFile(new URL('../src/pages/vet/vetDomain.js', import.meta.url), 'utf8')).replace('../../i18n/locale.js', './locale.mjs'))
 const domain = await import(pathToFileURL(join(temp, 'vetDomain.mjs')))
 const store = new Map()
 const events = []
@@ -37,7 +38,25 @@ const json = (value, status = 200) => new Response(JSON.stringify(value), { stat
 const rawUser = { UserID: 1, ClubID: 2, Email: 'owner@example.test', Roles: ['HORSE_OWNER'], Status: 'Active' }
 const rawHorse = { HorseID: 3, HorseName: 'Thunder', RegistrationStatus: 'Draft' }
 beforeEach(() => { store.clear(); events.length = 0 })
+
+test('The Groom stall route requires the Groom role and horse-view permission', async () => {
+  const { hasRouteAccess } = await import('../src/routing/access.js')
+  assert.equal(hasRouteAccess('/groom/stalls', 'groom', ['HORSE_VIEW']), true)
+  assert.equal(hasRouteAccess('/groom/stalls', 'groom', []), false)
+  assert.equal(hasRouteAccess('/groom/stalls', 'owner', ['HORSE_VIEW']), false)
+  assert.equal(hasRouteAccess('/groom/stalls', 'trainer', ['HORSE_VIEW']), false)
+})
 after(async () => { globalThis.fetch = originalFetch; await rm(temp, { recursive: true, force: true }) })
+
+test('Audit and trainer-directory routes require the appropriate permissions', async () => {
+  const { hasRouteAccess } = await import('../src/routing/access.js')
+  assert.equal(hasRouteAccess('/audit-logs', 'manager', ['AUDIT_VIEW']), true)
+  assert.equal(hasRouteAccess('/audit-logs', 'trainer', []), false)
+  assert.equal(hasRouteAccess('/audit-logs', 'owner', ['AUDIT_VIEW']), false)
+  assert.equal(hasRouteAccess('/training/trainers', 'headTrainer', ['TRAINER_ASSIGN']), true)
+  assert.equal(hasRouteAccess('/training/trainers/12', 'headTrainer', []), false)
+  assert.equal(hasRouteAccess('/training/trainers', 'trainer', ['TRAINER_ASSIGN']), false)
+})
 
 test('Care lists include all pages and surface malformed responses instead of empty results', async () => {
   client.saveSession('access', 'refresh')
@@ -497,4 +516,49 @@ test('relative file links resolve from the configured API base and absolute link
   assert.equal(client.resolveFileUrl('/api/files/horse.pdf'), 'https://equi.example.test/api/files/horse.pdf')
   assert.equal(client.resolveFileUrl('files/horse.pdf'), 'https://equi.example.test/api/files/horse.pdf')
   assert.equal(client.resolveFileUrl('https://files.example.test/horse.pdf'), 'https://files.example.test/horse.pdf')
+})
+
+
+test('Integrated navigation preserves role and permission gates for deep links', async () => {
+  const { hasRouteAccess } = await import('../src/routing/access.js')
+  assert.equal(hasRouteAccess('/manager/vet-duty', 'manager', ['CLUB_MANAGE']), true)
+  assert.equal(hasRouteAccess('/manager/roles', 'manager', ['HORSE_VIEW']), false)
+  assert.equal(hasRouteAccess('/training/plans/12/edit', 'trainer', ['HORSE_VIEW']), false)
+  assert.equal(hasRouteAccess('/training/plans/12/edit', 'trainer', ['TRAINING_PLAN_MANAGE']), true)
+  assert.equal(hasRouteAccess('/vet/horses/1/examination', 'groom', ['MEDICAL_MANAGE']), false)
+  assert.equal(hasRouteAccess('/owner/horses/1/training/stages', 'owner', ['OWNER_VIEW']), true)
+})
+
+test('Integrated clinical adapter retains vital signs and owner declarations', async () => {
+  client.saveSession('access', 'refresh')
+  globalThis.fetch = async () => json({ ...rawHorse, DeclaredHealth: 'Quan sát khỏe', MedicalHistory: 'Tiền sử', OwnerNote: 'Theo dõi', LeftDate: '2026-11-08' })
+  const horse = await horses.getHorseById('3')
+  assert.equal(horse.declaredHealth, 'Quan sát khỏe')
+  assert.equal(horse.leftDate, '2026-11-08')
+  globalThis.fetch = async (url, options) => {
+    const payload = JSON.parse(options.body)
+    assert.equal(payload.BodyTemperatureC, 38.2)
+    assert.equal(payload.HeartRateBpm, 42)
+    assert.equal(payload.RespiratoryRate, 18)
+    return json({ MedicalRecordID: 5, HorseID: 3, VetID: 1, RecordStatus: 'Draft', ...payload })
+  }
+  const record = await horses.saveExaminationDraft('3', {
+    examType: 'Follow-up', examDate: '', symptoms: '', diagnosis: '', treatmentPlan: '', conclusion: '',
+    healthStatus: '', trainingEligibility: '', restrictionNote: '', followUpDate: '',
+    bodyTemperatureC: 38.2, heartRateBpm: 42, respiratoryRate: 18,
+  })
+  assert.equal(record.bodyTemperatureC, 38.2)
+  assert.equal(record.heartRateBpm, 42)
+  assert.equal(record.respiratoryRate, 18)
+  globalThis.fetch = async (url, options) => {
+    const payload = JSON.parse(options.body)
+    assert.equal(payload.BodyTemperatureC, null)
+    assert.equal(payload.HeartRateBpm, null)
+    assert.equal(payload.RespiratoryRate, null)
+    return json({ MedicalRecordID: 5, HorseID: 3, VetID: 1, RecordStatus: 'Draft', ...payload })
+  }
+  const cleared = await horses.saveExaminationDraft('3', { ...record, bodyTemperatureC: undefined, heartRateBpm: undefined, respiratoryRate: undefined }, '5')
+  assert.equal(cleared.bodyTemperatureC, undefined)
+  assert.equal(cleared.heartRateBpm, undefined)
+  assert.equal(cleared.respiratoryRate, undefined)
 })

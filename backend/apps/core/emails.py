@@ -39,15 +39,18 @@ def _deliverable(address: str | None) -> bool:
     return not (using_smtp and address.lower().endswith(".local"))
 
 
-def _send(recipients, subject, body):
+def _send(recipients, subject, body, html=None):
     try:
-        send_mail(subject, body, settings.DEFAULT_FROM_EMAIL, recipients, fail_silently=False)
+        send_mail(subject, body, settings.DEFAULT_FROM_EMAIL, recipients, fail_silently=False, html_message=html)
     except Exception:  # noqa: BLE001 - mail lỗi không được làm hỏng nghiệp vụ
         logger.exception("Không gửi được email '%s' tới %s", subject, recipients)
 
 
-def send_email(recipients, subject: str, body: str):
+def send_email(recipients, subject: str, body: str, essential: bool = False, html: str | None = None):
+    """essential=True: email bắt buộc (đặt lại mật khẩu), gửi cả khi đã tắt email thông báo."""
     if getattr(_state, "off", False):
+        return
+    if not essential and not getattr(settings, "NOTIFICATION_EMAILS", True):
         return
     recipients = sorted({r.strip().lower() for r in recipients if _deliverable(r)})
     if not recipients:
@@ -57,9 +60,9 @@ def send_email(recipients, subject: str, body: str):
 
     def dispatch():
         if getattr(settings, "EMAIL_ASYNC", True):
-            threading.Thread(target=_send, args=(recipients, full_subject, body + footer), daemon=True).start()
+            threading.Thread(target=_send, args=(recipients, full_subject, body + footer, html), daemon=True).start()
         else:
-            _send(recipients, full_subject, body + footer)
+            _send(recipients, full_subject, body + footer, html)
 
     transaction.on_commit(dispatch)
 
@@ -92,19 +95,36 @@ def account_created_by_manager(user, manager):
     ))
 
 
-def password_reset_link(user, link):
-    send_email([user.email], "Đặt lại mật khẩu", (
-        f"Chào {user.full_name},\n\n"
-        "Có yêu cầu đặt lại mật khẩu cho tài khoản EquiTrack của bạn.\n"
-        f"Bấm vào link sau trong vòng 1 giờ để đặt mật khẩu mới:\n{link}\n\n"
-        "Nếu bạn không yêu cầu, hãy bỏ qua email này; mật khẩu hiện tại vẫn giữ nguyên."
-    ))
+def password_reset_link(user, link, english=False):
+    """Email đặt lại mật khẩu: bản chữ thường + bản HTML có nút bấm (Gmail hiển thị nút)."""
+    from html import escape
+
+    if english:
+        subject, hello = "Reset your password", f"Hello {user.full_name},"
+        lines = ["We received a request to reset the password of your EquiTrack account.",
+                 "Click the button below within 1 hour to set a new password:",
+                 "If you did not request this, ignore this email; your current password stays the same."]
+        button = "Set a new password"
+    else:
+        subject, hello = "Đặt lại mật khẩu", f"Chào {user.full_name},"
+        lines = ["Có yêu cầu đặt lại mật khẩu cho tài khoản EquiTrack của bạn.",
+                 "Bấm vào nút dưới đây trong vòng 1 giờ để đặt mật khẩu mới:",
+                 "Nếu bạn không yêu cầu, hãy bỏ qua email này; mật khẩu hiện tại vẫn giữ nguyên."]
+        button = "Đặt mật khẩu mới"
+    body = f"{hello}\n\n{lines[0]}\n{lines[1]}\n{link}\n\n{lines[2]}"
+    html = (f'<div style="font-family:Arial,sans-serif;font-size:15px;color:#2f3527;line-height:1.6">'
+            f'<p>{escape(hello)}</p><p>{escape(lines[0])}<br>{escape(lines[1])}</p>'
+            f'<p><a href="{escape(link)}" style="display:inline-block;background:#4c5b36;color:#fff;padding:12px 22px;'
+            f'border-radius:8px;text-decoration:none;font-weight:bold">{escape(button)}</a></p>'
+            f'<p style="font-size:13px;color:#6b705f">{escape(link)}</p><p>{escape(lines[2])}</p>'
+            f'<p style="font-size:12px;color:#8a8d82">EquiTrack · {escape(settings.FRONTEND_URL)}</p></div>')
+    send_email([user.email], subject, body, essential=True, html=html)
 
 
 def password_reset_by_manager(user, manager):
     send_email([user.email], "Mật khẩu của bạn đã được đặt lại", (
         f"Chào {user.full_name},\n\n"
-        f"Quản lý CLB {manager.full_name} vừa đặt lại mật khẩu tài khoản EquiTrack của bạn.\n"
+        f"Quản lý câu lạc bộ {manager.full_name} vừa đặt lại mật khẩu tài khoản EquiTrack của bạn.\n"
         "Mật khẩu tạm sẽ được quản lý báo riêng. Đăng nhập xong hãy đổi mật khẩu ở mục Tài khoản."
     ))
 
@@ -112,7 +132,7 @@ def password_reset_by_manager(user, manager):
 def account_status_changed(user, locked, reason=None):
     if locked:
         body = (f"Chào {user.full_name},\n\nTài khoản EquiTrack của bạn đã bị tạm khóa."
-                + (f"\nLý do: {reason}" if reason else "") + "\nVui lòng liên hệ quản lý CLB nếu cần hỗ trợ.")
+                + (f"\nLý do: {reason}" if reason else "") + "\nVui lòng liên hệ quản lý câu lạc bộ nếu cần hỗ trợ.")
     else:
         body = f"Chào {user.full_name},\n\nTài khoản EquiTrack của bạn đã được mở khóa, bạn có thể đăng nhập lại."
     send_email([user.email], "Tài khoản đã bị tạm khóa" if locked else "Tài khoản đã được mở khóa", body)
@@ -135,7 +155,7 @@ def registration_verified(horse):
 
 
 def initial_exam_needed(horse):
-    """Hồ sơ vừa xác minh: báo bác sĩ đang trực (không ai trực thì mọi bác sĩ của CLB) để khám đầu vào."""
+    """Hồ sơ vừa xác minh: báo bác sĩ đang trực (không ai trực thì mọi bác sĩ của câu lạc bộ) để khám đầu vào."""
     from apps.medical.duty import vets_to_alert
 
     send_email([vet.email for vet in vets_to_alert(horse.club_id)], f"Ngựa chờ khám đầu vào: {horse.horse_name}", (

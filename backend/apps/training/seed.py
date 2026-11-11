@@ -1,4 +1,4 @@
-"""Danh mục chuyên môn giống phần SEED DATA của sql/horse_v2.sql (test kiểm tra luôn khớp) và trainer mẫu."""
+"""Danh mục chuyên môn giống phần SEED DATA của sql/horse_v2.sql (test kiểm tra luôn khớp) và huấn luyện viên mẫu."""
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -113,7 +113,7 @@ DEMO_STAGE1_SESSIONS = [
     (-12, "Completed", Decimal("4.2"), Decimal("36.2"), Decimal("71"), "Good", "Nhịp chạy đều hơn buổi trước."),
     (-10, "Cancelled", None, None, None, None, "Trời mưa to, sân trơn"),
     (-8, "Completed", Decimal("4.5"), Decimal("37.0"), Decimal("74"), "Good", "Hồi phục nhanh, giữ tải hiện tại."),
-    (-6, "Missed", None, None, None, None, "Work Rider ốm, không có người thay"),
+    (-6, "Missed", None, None, None, None, "kỵ sĩ tập luyện ốm, không có người thay"),
     (-4, "Completed", Decimal("4.8"), Decimal("38.1"), Decimal("77"), "Good", "Sải chân tốt, có thể tăng quãng đường."),
     (-2, "Completed", Decimal("5.0"), Decimal("38.9"), Decimal("80"), "Excellent", "Đạt mục tiêu giai đoạn nền tảng."),
 ]

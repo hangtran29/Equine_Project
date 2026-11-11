@@ -1,0 +1,103 @@
+/* =========================================================================
+   Giao diện điện thoại (≤ 760px)
+   File này nạp SAU CÙNG (main.jsx) nên ghi đè được App.css, f1.css, Care.css.
+   Mục tiêu: không phần nào rộng hơn màn hình -> trình duyệt điện thoại không
+   phải thu nhỏ cả trang (lỗi chữ bé, nội dung bị cắt bên phải).
+   ========================================================================= */
+@media (max-width: 760px) {
+  html, body { overflow-x: hidden; }
+  .app-shell, .app-main, .page-content { min-width: 0; max-width: 100vw; }
+
+  /* ---------- Thanh trên cùng: 2 hàng (chức vụ / các nút) ---------- */
+  .app-shell .app-main .topbar {
+    position: static; flex-wrap: wrap; align-items: center; gap: 8px 10px;
+    min-height: 0; padding: 10px 14px;
+  }
+  .app-shell .app-main .topbar .topbar-workspace { flex: 1 1 100%; min-width: 0; }
+  .app-shell .app-main .topbar .topbar-role {
+    display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 15px; line-height: 1.3;
+  }
+  .app-shell .app-main .topbar > .topbar-account {
+    flex: 1 1 100%; min-width: 0; justify-content: flex-start; gap: 8px;
+  }
+  .app-shell .app-main .topbar .topbar-date,
+  .app-shell .app-main .topbar .account-name,
+  .app-shell .app-main .topbar .topbar-home-text { display: none; }
+  .app-shell .app-main .topbar .topbar-user { gap: 0; }
+  .app-shell .app-main .topbar .avatar { width: 34px; height: 34px; flex-basis: 34px; font-size: 12px; }
+  .app-shell .app-main .topbar .topbar-account > .button,
+  .app-shell .app-main .topbar .topbar-account > button,
+  .app-shell .app-main .topbar .topbar-account > a.button {
+    min-height: 34px; height: 34px; padding: 0 10px; font-size: 12.5px;
+  }
+  /* Nút "Đăng xuất" đẩy về cuối hàng */
+  .app-shell .app-main .topbar .topbar-account > button:last-child { margin-left: auto; }
+
+  /* ---------- Nội dung trang ---------- */
+  .page-content { padding: 18px 14px 32px; }
+  .page-content h1 { font-size: 26px; line-height: 1.2; overflow-wrap: anywhere; }
+
+  /* Bảng: cuộn ngang trong khung thay vì làm cả trang rộng ra */
+  .app-main table {
+    display: block; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;
+  }
+  .app-main table th, .app-main table td { white-space: nowrap; }
+  .app-main table td[style*="max-width"], .app-main table td p { white-space: normal; min-width: 180px; }
+
+  /* Thanh công cụ, ô tìm kiếm, bộ lọc: xuống dòng, chiếm cả chiều ngang */
+  .f1 .toolbar, .f1 .panel-head, .page-heading { flex-wrap: wrap; }
+  .f1 .toolbar > *, .f1 .panel-head > * { max-width: 100%; min-width: 0; }
+  .f1 .toolbar .search, .f1 label.search, .app-main label.search { flex: 1 1 100%; width: 100%; min-width: 0; }
+  .f1 .toolbar select.input, .f1 .toolbar .input { flex: 1 1 140px; min-width: 0; width: auto; }
+  .f1 .toolbar .btn { flex: 0 0 auto; }
+  /* Nhóm nút đẩy sang phải (margin-left:auto) trên máy tính -> xuống hàng riêng, nút giãn đều */
+  .f1 .toolbar > div[style*="display: flex"], .f1 .panel-head > div[style*="display: flex"] {
+    flex: 1 1 100%; flex-wrap: wrap; margin-left: 0 !important;
+  }
+  .f1 .toolbar > div[style*="display: flex"] > .btn { flex: 1 1 auto; justify-content: center; }
+  .f1 .tabs { max-width: 100%; overflow-x: auto; flex-wrap: nowrap; }
+  .f1 .tabs > * { flex: 0 0 auto; }
+  /* Tab gạch chân (hồ sơ y tế...): một hàng, vuốt ngang */
+  .f1 .utabs { gap: 4px; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
+  .f1 .utabs::-webkit-scrollbar { display: none; }
+  .f1 .utabs span { flex: 0 0 auto; white-space: nowrap; padding: 10px 12px 11px; }
+  .f1 .filters { grid-template-columns: 1fr !important; }
+  .f1 .filters > * { min-width: 0; }
+  .app-main select.input, .app-main input.input, .app-main textarea { max-width: 100%; }
+
+  /* Đầu thẻ (ảnh ngựa + tên + nhãn trạng thái): nhãn xuống hàng thay vì bóp chữ */
+  .f1 .ctx, .f1 .hcard-head { flex-wrap: wrap; gap: 10px; }
+  .f1 .ctx .who, .f1 .hcard-head .who { flex: 1 1 220px; min-width: 0; }
+  .f1 .ctx h2, .f1 .hcard-head h3 { overflow-wrap: anywhere; }
+
+  /* Lưới form / thẻ: một cột */
+  .f1 .grid, .f1 .fgrid, .f1 .fgrid.three, .f1 .form .row, .f1 .hcards, .f1 .two { grid-template-columns: minmax(0, 1fr) !important; }
+  .f1 .kpis, .f1 .kpis.five { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  .f1 .card { padding: 14px; min-width: 0; }
+  .f1 .dl { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  .f1 .dl dd, .f1 .dl b { overflow-wrap: anywhere; }
+
+  /* Nhóm nút cuối form: xuống dòng, nút chính không bị đẩy ra ngoài */
+  .f1 .actions, .f1 .btn-row { flex-wrap: wrap; gap: 8px; }
+  .f1 .actions .left { flex: 1 1 100%; }
+  .f1 .actions .btn, .f1 .btn-row .btn { max-width: 100%; white-space: normal; }
+
+  /* Hộp thoại và popup khẩn */
+  .f1 .dialog, .overlay .dialog { width: calc(100vw - 24px); max-width: calc(100vw - 24px); max-height: calc(100vh - 24px); overflow-y: auto; }
+  .f1 .urgent-pop { top: 12px; right: 12px; left: 12px; width: auto; }
+
+  /* Bản đồ chuồng trại: khung vừa màn hình, kéo để xem */
+  .f1 .map { width: 100%; height: 300px; }
+  .f1 .mcard { width: min(310px, calc(100vw - 52px)); }
+  /* Ghim nhỏ lại cho đỡ chồng lên nhau (mũi ghim vẫn chỉ đúng chỗ) */
+  .f1 .map .mpin { width: 30px; height: 30px; margin: -38px 0 0 -15px; }
+  .f1 .map .mpin.on { width: 36px; height: 36px; margin: -44px 0 0 -18px; }
+  .f1 .map .mpin b { font-size: 13px; }
+  .f1 .map .mpin svg { width: 14px; height: 14px; }
+}
+
+/* Điện thoại nhỏ (≤ 380px) */
+@media (max-width: 380px) {
+  .app-shell .app-main .topbar > .topbar-account { gap: 6px; }
+  .f1 .kpis, .f1 .kpis.five, .f1 .dl { grid-template-columns: minmax(0, 1fr) !important; }
+}

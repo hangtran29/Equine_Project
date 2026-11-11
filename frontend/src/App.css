@@ -11165,3 +11165,22 @@ button {
 @media (max-width: 420px) {
   .topbar > .topbar-account .topbar-date { display: none; }
 }
+
+/* Ảnh đầu trang: ngựa có người cưỡi, đẩy sang phải để không bị khung nội dung che */
+.app-main::before {
+  background-image:
+    linear-gradient(180deg, rgba(244, 242, 235, 0) 70%, #f4f2eb 100%),
+    linear-gradient(90deg, #f4f2eb 42%, rgba(244, 242, 235, .6) 56%, rgba(244, 242, 235, 0) 70%),
+    url('/app-header-horse-rider.jpg');
+  background-position: center, center, calc(100% + 200px) top;
+}
+@media (min-width: 921px) and (max-width: 1600px) {
+  .app-main::before {
+    height: 232px;
+    background-size: 100% 100%, 100% 100%, auto 230px;
+    background-position: center, center, calc(100% + 110px) 0;
+  }
+}
+/* Thanh trên cùng: chỉ hiện vai trò (đã bỏ "Câu lạc bộ #1") */
+.topbar-workspace .topbar-role { color: #3d4433; font-size: 14.5px; font-weight: 700; letter-spacing: 0; text-transform: none; }
+.topbar-account { gap: 12px; }

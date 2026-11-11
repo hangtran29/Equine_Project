@@ -4,6 +4,7 @@ import { getCompleteVetList } from '../../api/vetApi.ts'
 import { useAction } from '../../components/common/useOperations.js'
 import { Feedback } from '../../components/common/OperationUI.jsx'
 import { scheduleTypes, vetDateTime } from './vetDomain.js'
+import { notifyNotificationsChanged } from '../../flow1/api.js'
 
 function destination(item, role) {
   const horse = encodeURIComponent(item.HorseID ?? '')
@@ -32,7 +33,7 @@ export default function NotificationsPage({ currentUser, role }) {
   const [unread, setUnread] = useState(false)
   const inFlight = useRef(null)
   const reload = () => setVersion(v => v + 1)
-  const action = useAction(reload)
+  const action = useAction(() => { reload(); notifyNotificationsChanged() })
   useEffect(() => {
     let active = true
     let timer

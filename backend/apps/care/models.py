@@ -5,6 +5,7 @@ FLOW 4 - chăm sóc và dinh dưỡng (horse_v2.sql):
   CareTaskRule (chỉ tiêu sinh việc của từng CLB), HorseGroom (Groom phụ trách ngựa),
   InventoryItem, InventoryRequest, InventoryRequestItem (kho vật tư của CLB).
 """
+from apps.core.clubtime import now as club_now
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
@@ -16,10 +17,10 @@ from apps.horses.models import Horse
 
 class DietPlan(models.Model):
     class Status(models.TextChoices):
-        PENDING = "Pending"      # chờ Vet duyệt
+        PENDING = "Pending"      # chờ Head Trainer chốt, Vet có thể góp ý
         APPROVED = "Approved"    # đang áp dụng
         REJECTED = "Rejected"    # Vet trả về, Head Trainer sửa rồi gửi lại
-        ADJUSTED = "Adjusted"    # Vet điều chỉnh trực tiếp (vd ngựa đang điều trị), vẫn áp dụng
+        ADJUSTED = "Adjusted"    # bản điều chỉnh cũ được giữ để đọc lịch sử
         EXPIRED = "Expired"      # đã có khẩu phần mới thay thế / hết hạn
 
     id = models.AutoField(primary_key=True, db_column="DietPlanID")
@@ -33,7 +34,7 @@ class DietPlan(models.Model):
     end_date = models.DateField(null=True, blank=True, db_column="EndDate")
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING, db_column="Status")
     vet_note = models.CharField(max_length=1500, null=True, blank=True, db_column="VetNote")
-    created_at = models.DateTimeField(default=timezone.now, db_column="CreatedAt")
+    created_at = models.DateTimeField(default=club_now, db_column="CreatedAt")
     approved_at = models.DateTimeField(null=True, blank=True, db_column="ApprovedAt")
     if flows.has_training():  # khẩu phần lập theo giáo án đang chạy (Flow 2)
         training_plan = models.ForeignKey("training.TrainingPlan", on_delete=models.DO_NOTHING, null=True, blank=True,
@@ -68,6 +69,8 @@ class CareTask(models.Model):
         CLEANING = "Cleaning"
         BATHING = "Bathing"
         ICE_LEG_SOAK = "Ice Leg Soak"
+        MEDICAL = "Medical Care"
+        TRAINING = "Training Support"
 
     class Status(models.TextChoices):
         PENDING = "Pending"
@@ -77,7 +80,7 @@ class CareTask(models.Model):
     id = models.AutoField(primary_key=True, db_column="CareTaskID")
     horse = models.ForeignKey(Horse, on_delete=models.DO_NOTHING, db_column="HorseID", related_name="care_tasks")
     groom = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.DO_NOTHING, db_column="GroomID",
-                              related_name="+")
+                              null=True, blank=True, related_name="+")
     assigned_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.DO_NOTHING, null=True, blank=True,
                                     db_column="AssignedBy", related_name="+")
     task_type = models.CharField(max_length=50, choices=TaskType.choices, db_column="TaskType")
@@ -88,11 +91,24 @@ class CareTask(models.Model):
     # Việc hệ thống tự sinh: chỉ tiêu nào + khóa nguồn (không sinh trùng). Việc giao tay: cả hai NULL.
     rule_code = models.CharField(max_length=40, null=True, blank=True, db_column="RuleCode")
     source_key = models.CharField(max_length=120, null=True, blank=True, db_column="SourceKey")
+    medical_record = models.ForeignKey("medical.MedicalRecord", on_delete=models.DO_NOTHING, null=True, blank=True,
+                                       db_column="MedicalRecordID", related_name="care_tasks")
+    training_lock = models.ForeignKey("medical.TrainingLock", on_delete=models.DO_NOTHING, null=True, blank=True,
+                                      db_column="TrainingLockID", related_name="care_tasks")
+    priority = models.CharField(max_length=10, default="Normal", choices=[("Normal", "Normal"), ("Urgent", "Urgent")], db_column="Priority")
+    feeding_outcome = models.CharField(max_length=10, null=True, blank=True, choices=[("All", "All"), ("Partial", "Partial"), ("Refused", "Refused")], db_column="FeedingOutcome")
+    outcome_note = models.CharField(max_length=1000, null=True, blank=True, db_column="OutcomeNote")
+    completed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.DO_NOTHING, null=True, blank=True,
+                                     db_column="CompletedBy", related_name="+")
+    diet_meal = models.ForeignKey(DietMeal, on_delete=models.DO_NOTHING, null=True, blank=True,
+                                  db_column="DietMealID", related_name="care_tasks")
 
     class Meta:
         managed = False
         db_table = "CareTask"
         ordering = ["scheduled_at", "id"]
+        constraints = [models.UniqueConstraint(fields=["horse", "source_key"], condition=models.Q(source_key__isnull=False),
+                                               name="UX_CareTask_Source")]
 
     @property
     def is_auto(self):
@@ -100,7 +116,7 @@ class CareTask(models.Model):
 
 
 class CareTaskRule(models.Model):
-    """Chỉ tiêu sinh việc chăm sóc của CLB (bật / tắt, giờ làm). Mỗi CLB mỗi chỉ tiêu 1 dòng."""
+    """Chỉ tiêu sinh việc chăm sóc của câu lạc bộ (bật / tắt, giờ làm). Mỗi câu lạc bộ mỗi chỉ tiêu 1 dòng."""
 
     class Code(models.TextChoices):
         FEEDING_BY_DIET = "FEEDING_BY_DIET"            # cho ăn theo từng bữa của khẩu phần đang áp dụng
@@ -118,7 +134,7 @@ class CareTaskRule(models.Model):
     is_active = models.BooleanField(default=True, db_column="IsActive")
     updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.DO_NOTHING, null=True, blank=True,
                                    db_column="UpdatedBy", related_name="+")
-    updated_at = models.DateTimeField(default=timezone.now, db_column="UpdatedAt")
+    updated_at = models.DateTimeField(default=club_now, db_column="UpdatedAt")
 
     class Meta:
         managed = False
@@ -128,7 +144,7 @@ class CareTaskRule(models.Model):
 
 
 class HorseGroom(models.Model):
-    """Groom phụ trách ngựa: việc tự sinh của ngựa giao cho người này (chưa có thì chia cho Groom ít việc nhất)."""
+    """Groom do Manager phân công; chưa có thì giữ task chưa phân công để xử lý."""
 
     horse = models.OneToOneField(Horse, primary_key=True, on_delete=models.DO_NOTHING, db_column="HorseID",
                                  related_name="groom_link")
@@ -136,11 +152,48 @@ class HorseGroom(models.Model):
                               related_name="+")
     assigned_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.DO_NOTHING, null=True, blank=True,
                                     db_column="AssignedBy", related_name="+")
-    assigned_at = models.DateTimeField(default=timezone.now, db_column="AssignedAt")
+    assigned_at = models.DateTimeField(default=club_now, db_column="AssignedAt")
 
     class Meta:
         managed = False
         db_table = "HorseGroom"
+
+
+class VetCareOrder(models.Model):
+    id = models.AutoField(primary_key=True, db_column="VetCareOrderID")
+    medical_record = models.ForeignKey("medical.MedicalRecord", on_delete=models.DO_NOTHING, db_column="MedicalRecordID", related_name="care_orders")
+    training_lock = models.ForeignKey("medical.TrainingLock", on_delete=models.DO_NOTHING, null=True, blank=True,
+                                      db_column="TrainingLockID", related_name="care_orders")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.DO_NOTHING, db_column="CreatedBy", related_name="+")
+    task_type = models.CharField(max_length=50, choices=CareTask.TaskType.choices, db_column="TaskType")
+    instructions = models.CharField(max_length=1000, db_column="Instructions")
+    start_date = models.DateField(db_column="StartDate")
+    end_date = models.DateField(db_column="EndDate")
+    time_of_day = models.TimeField(db_column="TimeOfDay")
+    is_active = models.BooleanField(default=True, db_column="IsActive")
+    created_at = models.DateTimeField(default=club_now, db_column="CreatedAt")
+
+    class Meta:
+        managed = False
+        db_table = "VetCareOrder"
+
+
+class VetDietRestriction(models.Model):
+    id = models.AutoField(primary_key=True, db_column="VetDietRestrictionID")
+    horse = models.ForeignKey(Horse, on_delete=models.DO_NOTHING, db_column="HorseID", related_name="diet_restrictions")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.DO_NOTHING, db_column="CreatedBy", related_name="+")
+    instructions = models.CharField(max_length=1500, db_column="Instructions")
+    feed_type = models.CharField(max_length=100, blank=True, db_column="FeedType")
+    max_daily_quantity = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, db_column="MaxDailyQuantity")
+    unit = models.CharField(max_length=30, blank=True, db_column="Unit")
+    start_date = models.DateField(db_column="StartDate")
+    end_date = models.DateField(null=True, blank=True, db_column="EndDate")
+    created_at = models.DateTimeField(default=club_now, db_column="CreatedAt")
+    is_active = models.BooleanField(default=True, db_column="IsActive")
+
+    class Meta:
+        managed = False
+        db_table = "VetDietRestriction"
 
 
 class InventoryItem(models.Model):
@@ -194,7 +247,7 @@ class InventoryRequest(models.Model):
                                      related_name="+")
     approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.DO_NOTHING, null=True, blank=True,
                                     db_column="ApprovedBy", related_name="+")
-    request_date = models.DateTimeField(default=timezone.now, db_column="RequestDate")
+    request_date = models.DateTimeField(default=club_now, db_column="RequestDate")
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING, db_column="Status")
     reason = models.CharField(max_length=1500, null=True, blank=True, db_column="Reason")
     approved_at = models.DateTimeField(null=True, blank=True, db_column="ApprovedAt")

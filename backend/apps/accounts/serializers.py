@@ -1,6 +1,6 @@
-import re
-
 from rest_framework import serializers
+
+from apps.core import validators
 
 from apps.core.serializers import DBColumnModelSerializer
 
@@ -14,7 +14,8 @@ class UserSerializer(DBColumnModelSerializer):
 
     class Meta:
         model = User
-        fields = ["id", "club", "full_name", "email", "phone", "address", "status", "created_at", "Roles"]
+        fields = ["id", "club", "full_name", "email", "phone", "address", "status", "must_change_password",
+                  "created_at", "Roles"]
         read_only_fields = fields
 
     def get_Roles(self, obj):
@@ -39,37 +40,37 @@ class LoginSerializer(serializers.Serializer):
     Password = serializers.CharField(trim_whitespace=False)
 
 
-PHONE_RE = re.compile(r"^(0\d{9}|\+84\d{9})$")
+def _loose(**extra):
+    """Ô chữ để bộ kiểm tra dùng chung tự báo lỗi (bỏ trống, khoảng trắng...) bằng câu thống nhất."""
+    return serializers.CharField(required=False, allow_blank=True, allow_null=True, trim_whitespace=False,
+                                 default="", **extra)
 
 
 class UserCreateSerializer(serializers.Serializer):
-    """Manager tạo tài khoản trong CLB của mình (mặc định là chủ ngựa)."""
+    """Quản lý câu lạc bộ tạo tài khoản trong câu lạc bộ của mình (mặc định là chủ ngựa)."""
 
-    FullName = serializers.CharField(max_length=150)
-    Email = serializers.EmailField(max_length=100)
-    Phone = serializers.CharField(max_length=20, error_messages={
-        "required": "Cần nhập số điện thoại (Phone).", "blank": "Cần nhập số điện thoại (Phone)."})
-    Address = serializers.CharField(max_length=255, error_messages={
-        "required": "Cần nhập địa chỉ (Address).", "blank": "Cần nhập địa chỉ (Address)."})
+    FullName = _loose()
+    Email = _loose()
+    Phone = _loose()
+    Address = _loose()
     RoleCode = serializers.CharField(required=False, default="HORSE_OWNER")
     Password = serializers.CharField(required=False, allow_blank=True, min_length=6, trim_whitespace=False)
 
+    def validate_FullName(self, value):
+        return validators.clean_full_name(value)
+
     def validate_Email(self, value):
-        if User.objects.filter(email__iexact=value).exists():
-            raise serializers.ValidationError("Email đã được sử dụng.")
-        return value.lower()
+        return validators.clean_email(value)
 
     def validate_Phone(self, value):
-        phone = value.replace(" ", "").replace(".", "")
-        if not PHONE_RE.match(phone):
-            raise serializers.ValidationError(
-                "Số điện thoại không hợp lệ: 10 số bắt đầu bằng 0 (vd 0901234567) hoặc dạng +84 (vd +84901234567)."
-            )
-        return phone
+        return validators.clean_phone_number(value)
+
+    def validate_Address(self, value):
+        return validators.clean_address(value)
 
     def validate_RoleCode(self, value):
         if not Role.objects.filter(code=value).exists():
-            raise serializers.ValidationError("RoleCode không tồn tại.")
+            raise serializers.ValidationError("Chức vụ không tồn tại.")
         return value
 
 
@@ -111,31 +112,32 @@ class GoogleSignupSerializer(OwnerRegisterSerializer):
     """Kiểm tra thông tin bổ sung khi tạo tài khoản chủ ngựa bằng Google (không cần mật khẩu)."""
 
     Password = None
-    FullName = serializers.CharField(max_length=150)
 
 
 # ---------------------------------------------------------------------------
 # Tài khoản cá nhân, quản trị (Manager), CLB
 # ---------------------------------------------------------------------------
-def clean_phone(value):
-    phone = value.replace(" ", "").replace(".", "")
-    if not PHONE_RE.match(phone):
-        raise serializers.ValidationError(
-            "Số điện thoại không hợp lệ: 10 số bắt đầu bằng 0 (vd 0901234567) hoặc dạng +84 (vd +84901234567).")
-    return phone
+def clean_phone(value, exclude_user_id=None):
+    return validators.clean_phone_number(value, exclude_user_id=exclude_user_id)
 
 
 class ProfileUpdateSerializer(serializers.Serializer):
     """PATCH /api/auth/me và PATCH /api/users/<id>: họ tên, số điện thoại, địa chỉ (email không đổi)."""
 
-    FullName = serializers.CharField(max_length=150, required=False)
-    Phone = serializers.CharField(max_length=20, required=False)
-    Address = serializers.CharField(max_length=255, required=False)
+    FullName = serializers.CharField(required=False, allow_blank=True, allow_null=True, trim_whitespace=False)
+    Phone = serializers.CharField(required=False, allow_blank=True, allow_null=True, trim_whitespace=False)
+    Address = serializers.CharField(required=False, allow_blank=True, allow_null=True, trim_whitespace=False)
 
     FIELD_MAP = {"FullName": "full_name", "Phone": "phone", "Address": "address"}
 
+    def validate_FullName(self, value):
+        return validators.clean_full_name(value)
+
     def validate_Phone(self, value):
-        return clean_phone(value)
+        return clean_phone(value, exclude_user_id=self.context.get("user_id"))
+
+    def validate_Address(self, value):
+        return validators.clean_address(value)
 
     def validate(self, attrs):
         if not attrs:
@@ -185,8 +187,8 @@ class ClubSerializer(DBColumnModelSerializer):
 
     def validate_club_name(self, value):
         if Club.objects.filter(club_name__iexact=value).exclude(pk=getattr(self.instance, "pk", None)).exists():
-            raise serializers.ValidationError("Tên CLB đã được dùng.")
+            raise serializers.ValidationError("Tên câu lạc bộ đã được dùng.")
         return value
 
     def validate_phone(self, value):
-        return clean_phone(value) if value else value
+        return validators.clean_phone_number(value, check_unique=False, landline=True) if value else value

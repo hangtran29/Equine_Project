@@ -2,6 +2,8 @@ from datetime import date
 
 from rest_framework import serializers
 
+from apps.core import validators
+
 from apps.core import flows
 from apps.core.serializers import DBColumnModelSerializer
 
@@ -116,20 +118,25 @@ class TrainingPlanStageSerializer(DBColumnModelSerializer):
 
 
 class TrainingPlanSerializer(DBColumnModelSerializer):
-    """Giáo án kèm thông tin ngựa, trainer và các giai đoạn."""
+    """Giáo án kèm thông tin ngựa, huấn luyện viên và các giai đoạn."""
 
     HorseID = serializers.IntegerField(source="assignment.horse_id", read_only=True)
     HorseName = serializers.CharField(source="assignment.horse.horse_name", read_only=True)
     TrainerID = serializers.IntegerField(source="assignment.trainer_id", read_only=True)
     TrainerName = serializers.CharField(source="assignment.trainer.full_name", read_only=True)
+    HorseCode = serializers.CharField(source="assignment.horse.horse_code", read_only=True)
+    SpecializationID = serializers.IntegerField(source="assignment.specialization_id", read_only=True)
+    SpecializationName = serializers.CharField(source="assignment.specialization.name", read_only=True)
+    ApprovedByName = serializers.CharField(source="approved_by.full_name", read_only=True, default=None)
     Stages = TrainingPlanStageSerializer(source="stages", many=True, read_only=True)
     TemplateName = serializers.CharField(source="template.template_name", read_only=True, default=None)
 
     class Meta:
         model = TrainingPlan
-        fields = ["id", "assignment", "HorseID", "HorseName", "TrainerID", "TrainerName", *PLAN_FIELDS, "status",
-                  "created_at", "submitted_at", "approved_by", "approved_at", "review_note", "template", "TemplateName",
-                  "Stages"]
+        fields = ["id", "assignment", "HorseID", "HorseName", "HorseCode", "TrainerID", "TrainerName",
+                  "SpecializationID", "SpecializationName", *PLAN_FIELDS, "status",
+                  "created_at", "submitted_at", "approved_by", "ApprovedByName", "approved_at", "review_note",
+                  "template", "TemplateName", "Stages"]
         read_only_fields = fields
 
 
@@ -147,6 +154,7 @@ class TrainingPlanCreateSerializer(TrainingPlanWriteSerializer):
 
     class Meta(TrainingPlanWriteSerializer.Meta):
         fields = PLAN_FIELDS + ["HorseID", "Stages"]
+        extra_kwargs = {"goal": {"required": True, "allow_blank": False, "allow_null": False}}   # Mục tiêu bắt buộc
 
 
 class NoteSerializer(serializers.Serializer):
@@ -169,26 +177,103 @@ SESSION_FIELDS = ["session_date", "start_time", "end_time", "sequence_no", "trai
                   "location", "instructions"]
 RESULT_FIELDS = ["actual_duration_minutes", "actual_distance_km", "avg_speed_kmh", "max_speed_kmh",
                  "avg_heart_rate", "max_heart_rate", "recovery_minutes", "performance_score", "rider_observation",
-                 "video_url"]
+                 "video_url", "early_end_reason", "early_end_note"]
+# Ô bắt buộc khi Kỵ sĩ tập luyện ghi kết quả (KS03)
+RESULT_REQUIRED = {"actual_duration_minutes": "ActualDurationMinutes", "actual_distance_km": "ActualDistanceKm",
+                   "performance_score": "PerformanceScore", "avg_speed_kmh": "AvgSpeedKmh",
+                   "max_speed_kmh": "MaxSpeedKmh", "recovery_minutes": "RecoveryMinutes"}
+EARLY_END_TOLERANCE_MINUTES = 5   # ngắn hơn dự kiến quá 5 phút thì tính là kết thúc sớm, phải ghi lý do
 
 
 class TrainingResultSerializer(DBColumnModelSerializer):
+    """
+    Kết quả buổi tập. context["session"] (buổi tập đang ghi) dùng để nhận biết kết thúc sớm:
+    thời lượng thực tế ngắn hơn dự kiến quá 5 phút thì bắt buộc EarlyEndReason, EarlyEndNote và EndTime.
+    """
+
+    EndTime = serializers.TimeField(required=False, allow_null=True, write_only=True,
+                                    error_messages={"invalid": "Giờ không đúng định dạng HH:mm."})
+    _NUM = {"invalid": "Giá trị phải là số.", "max_string_length": "Giá trị quá dài.",
+            "max_digits": "Giá trị vượt quá giới hạn cho phép.", "max_decimal_places": "Giá trị có quá nhiều chữ số thập phân.",
+            "max_whole_digits": "Giá trị vượt quá giới hạn cho phép."}
+
     class Meta:
         model = TrainingResult
-        fields = ["id", "session", *RESULT_FIELDS, "substitute_observation", "recorded_at"]
+        fields = ["id", "session", *RESULT_FIELDS, "substitute_observation", "recorded_at", "EndTime"]
         read_only_fields = ["id", "session", "substitute_observation", "recorded_at"]
+        extra_kwargs = {
+            "rider_observation": {"trim_whitespace": False, "allow_blank": True, "allow_null": True, "max_length": None},
+            "early_end_note": {"trim_whitespace": False, "allow_blank": True, "allow_null": True, "max_length": None},
+        }
+
+    def get_fields(self):
+        fields = super().get_fields()
+        for field in fields.values():
+            if isinstance(field, (serializers.IntegerField, serializers.DecimalField)):
+                field.error_messages.update(self._NUM)
+        return fields
 
     def validate(self, attrs):
-        score = attrs.get("performance_score")
-        if score is not None and not (0 <= score <= 100):
-            raise serializers.ValidationError({"PerformanceScore": ["Điểm từ 0 đến 100."]})
-        for attr, key in (("avg_heart_rate", "AvgHeartRate"), ("max_heart_rate", "MaxHeartRate")):
-            if attrs.get(attr) is not None and attrs[attr] <= 0:
-                raise serializers.ValidationError({key: ["Phải lớn hơn 0."]})
-        for attr, key in (("actual_distance_km", "ActualDistanceKm"), ("actual_duration_minutes",
-                                                                       "ActualDurationMinutes")):
-            if attrs.get(attr) is not None and attrs[attr] < 0:
-                raise serializers.ValidationError({key: ["Không được âm."]})
+        errors = {}
+
+        def need(attr, key):
+            if attrs.get(attr) is None:
+                errors[key] = [validators.MSG_REQUIRED]
+                return False
+            return True
+
+        for attr, key in RESULT_REQUIRED.items():
+            need(attr, key)
+
+        def in_range(attr, key, low, high, message):
+            value = attrs.get(attr)
+            if value is not None and not (low <= value <= high) and key not in errors:
+                errors[key] = [message]
+
+        in_range("actual_duration_minutes", "ActualDurationMinutes", 1, 600, "Thời lượng phải từ 1 đến 600 phút.")
+        in_range("actual_distance_km", "ActualDistanceKm", 0, 100, "Quãng đường phải từ 0 đến 100 km.")
+        in_range("performance_score", "PerformanceScore", 0, 100, "Điểm từ 0 đến 100.")
+        in_range("avg_speed_kmh", "AvgSpeedKmh", 0, 90, "Tốc độ phải từ 0 đến 90 km/h.")
+        in_range("max_speed_kmh", "MaxSpeedKmh", 0, 90, "Tốc độ phải từ 0 đến 90 km/h.")
+        in_range("recovery_minutes", "RecoveryMinutes", 0, 240, "Thời gian hồi phục phải từ 0 đến 240 phút.")
+        in_range("avg_heart_rate", "AvgHeartRate", 20, 300, "Nhịp tim phải từ 20 đến 300 lần/phút.")
+        in_range("max_heart_rate", "MaxHeartRate", 20, 300, "Nhịp tim phải từ 20 đến 300 lần/phút.")
+        avg, top = attrs.get("avg_speed_kmh"), attrs.get("max_speed_kmh")
+        if avg is not None and top is not None and top < avg and "MaxSpeedKmh" not in errors:
+            errors["MaxSpeedKmh"] = ["Tốc độ tối đa không được nhỏ hơn tốc độ trung bình."]
+        avg, top = attrs.get("avg_heart_rate"), attrs.get("max_heart_rate")
+        if avg is not None and top is not None and top < avg and "MaxHeartRate" not in errors:
+            errors["MaxHeartRate"] = ["Nhịp tim tối đa không được nhỏ hơn nhịp tim trung bình."]
+        try:
+            attrs["rider_observation"] = validators.clean_text(attrs.get("rider_observation"), 2000)
+        except serializers.ValidationError as exc:
+            errors["RiderObservation"] = exc.detail
+
+        session = self.context.get("session")
+        planned = getattr(session, "duration_planned_minutes", None)
+        actual = attrs.get("actual_duration_minutes")
+        end_time = attrs.pop("EndTime", None)
+        early = planned is not None and actual is not None and actual < planned - EARLY_END_TOLERANCE_MINUTES
+        if early:
+            reason = attrs.get("early_end_reason")
+            if not reason:
+                errors["EarlyEndReason"] = [validators.MSG_SELECT]
+            elif reason not in TrainingResult.EARLY_END_REASONS:
+                errors["EarlyEndReason"] = ["Lựa chọn không có trong danh mục."]
+            try:
+                attrs["early_end_note"] = validators.clean_text(attrs.get("early_end_note"), 1000)
+            except serializers.ValidationError as exc:
+                errors["EarlyEndNote"] = exc.detail
+            if end_time is None:
+                errors["EndTime"] = [validators.MSG_REQUIRED]
+            elif session is not None and end_time < session.start_time:
+                errors["EndTime"] = ["Giờ kết thúc không được trước giờ bắt đầu."]
+            attrs["_end_time"] = end_time
+        else:
+            attrs["early_end_reason"] = None
+            attrs["early_end_note"] = None
+        if errors:
+            raise serializers.ValidationError(errors)
         return attrs
 
 
@@ -197,12 +282,13 @@ class TrainingReviewSerializer(DBColumnModelSerializer):
     HorseID = serializers.IntegerField(source="session.stage.plan.assignment.horse_id", read_only=True)
     HorseName = serializers.CharField(source="session.stage.plan.assignment.horse.horse_name", read_only=True)
     SessionDate = serializers.DateField(source="session.session_date", read_only=True)
+    TrainingPlanID = serializers.IntegerField(source="session.stage.plan_id", read_only=True)
 
     class Meta:
         model = TrainingReview
-        fields = ["id", "session", "HorseID", "HorseName", "SessionDate", "trainer", "TrainerName", "review_date",
+        fields = ["id", "session", "HorseID", "HorseName", "SessionDate", "TrainingPlanID", "trainer", "TrainerName", "review_date",
                   "evaluation", "trainer_comment", "adjustment_required", "adjustment_note"]
-        read_only_fields = ["id", "session", "HorseID", "HorseName", "SessionDate", "trainer", "TrainerName",
+        read_only_fields = ["id", "session", "HorseID", "HorseName", "SessionDate", "TrainingPlanID", "trainer", "TrainerName",
                             "review_date"]
 
 
@@ -217,6 +303,7 @@ class TrainingSessionSerializer(DBColumnModelSerializer):
     HorseCode = serializers.CharField(source="stage.plan.assignment.horse.horse_code", read_only=True)
     TrainingPlanID = serializers.IntegerField(source="stage.plan_id", read_only=True)
     StageName = serializers.CharField(source="stage.stage_name", read_only=True)
+    StageOrder = serializers.IntegerField(source="stage.stage_order", read_only=True)
     WorkRiderName = serializers.CharField(source="work_rider.full_name", read_only=True)
     AssignedTrainerID = serializers.IntegerField(source="stage.plan.assignment.trainer_id", read_only=True)
     AssignedTrainerName = serializers.CharField(source="stage.plan.assignment.trainer.full_name", read_only=True)
@@ -225,13 +312,15 @@ class TrainingSessionSerializer(DBColumnModelSerializer):
     IsSubstitute = serializers.SerializerMethodField()
     Result = serializers.SerializerMethodField()
     Review = serializers.SerializerMethodField()
+    IsStopped = serializers.SerializerMethodField()
+    EndReason = serializers.SerializerMethodField()
 
     class Meta:
         model = TrainingSession
-        fields = ["id", "stage", "TrainingPlanID", "StageName", "HorseID", "HorseName", "HorseCode", "work_rider",
+        fields = ["id", "stage", "TrainingPlanID", "StageName", "StageOrder", "HorseID", "HorseName", "HorseCode", "work_rider",
                   "WorkRiderName", "assigned_by", "substitute_trainer", "AssignedTrainerID", "AssignedTrainerName",
                   "SupervisingTrainerID", "SupervisingTrainerName", "IsSubstitute", *SESSION_FIELDS, "status",
-                  "Result", "Review"]
+                  "Result", "Review", "IsStopped", "EndReason"]
         read_only_fields = fields
 
     def get_SupervisingTrainerID(self, obj):
@@ -252,6 +341,22 @@ class TrainingSessionSerializer(DBColumnModelSerializer):
     def get_Review(self, obj):
         review = obj.reviews.first()
         return TrainingReviewSerializer(review).data if review else None
+
+    def _end(self, obj):
+        """(ActionType, Reason) của lần dừng / hủy / đánh vắng; danh sách truyền sẵn qua context để khỏi truy vấn từng dòng."""
+        if obj.status not in ("Cancelled", "Missed"):
+            return None, None
+        reasons = self.context.get("end_reasons")
+        if reasons is None:
+            from .summaries import end_reasons
+            reasons = end_reasons([obj.pk])
+        return reasons.get(obj.pk, (None, None))
+
+    def get_IsStopped(self, obj):
+        return self._end(obj)[0] == "STOP_TRAINING_SESSION"
+
+    def get_EndReason(self, obj):
+        return self._end(obj)[1]
 
 
 class TrainingSessionWriteSerializer(DBColumnModelSerializer):
@@ -283,7 +388,7 @@ class TrainingSessionWriteSerializer(DBColumnModelSerializer):
 
 
 class StopSessionSerializer(serializers.Serializer):
-    """Dừng buổi tập; có Flow 3 thì báo luôn được sự cố sức khỏe (vào hàng chờ Vet)."""
+    """Dừng buổi tập; có Flow 3 thì báo luôn được sự cố sức khỏe (vào hàng chờ bác sĩ thú y)."""
 
     Reason = serializers.CharField(max_length=1000)
     if flows.has_flow3():
@@ -320,7 +425,7 @@ class TrainerProfileWriteSerializer(DBColumnModelSerializer):
 
     def validate_trainer_rating(self, value):
         if value is not None and not 0 <= value <= 5:
-            raise serializers.ValidationError("Điểm đánh giá trainer phải từ 0 đến 5.")
+            raise serializers.ValidationError("Điểm đánh giá huấn luyện viên phải từ 0 đến 5.")
         return value
 
 
@@ -373,7 +478,7 @@ class TrainerRaceResultSerializer(DBColumnModelSerializer):
         if position is not None and size is not None and not 1 <= position <= size:
             raise serializers.ValidationError({"FinishPosition": ["Thứ hạng phải từ 1 đến số ngựa tham gia (FieldSize)."]})
         if not attrs.get("horse") and not (attrs.get("horse_name") or "").strip():
-            raise serializers.ValidationError({"HorseName": ["Chọn ngựa trong CLB (HorseID) hoặc nhập tên ngựa."]})
+            raise serializers.ValidationError({"HorseName": ["Vui lòng chọn ngựa trong câu lạc bộ hoặc nhập tên ngựa."]})
         return attrs
 
 

@@ -39,7 +39,7 @@ def _summary_lines(summary):
     lines.append(f"Tốc độ TB: {_number(summary['AvgSpeedKmh'], ' km/h')}"
                  f" · Điểm phong độ TB: {_number(summary['AvgPerformanceScore'], '/100')}")
     evaluations = " · ".join(f"{count} {name}" for name, count in summary["Evaluations"].items() if count)
-    lines.append(f"Đánh giá của trainer: {evaluations or 'chưa có'}")
+    lines.append(f"Đánh giá của huấn luyện viên: {evaluations or 'chưa có'}")
     if summary.get("Health"):
         lines.append(f"Sức khỏe: {summary['Health']['Text']}")
     return lines
@@ -55,7 +55,7 @@ def plan_approved(plan):
         f"Chào {horse.owner.full_name},\n\n"
         f"Giáo án huấn luyện mới của {_label(horse)} đã được duyệt.\n"
         f"Mục tiêu: {plan.goal or '—'}\n"
-        f"Trainer phụ trách: {plan.assignment.trainer.full_name}\n"
+        f"Huấn luyện viên phụ trách: {plan.assignment.trainer.full_name}\n"
         f"Thời gian: {plan.start_date:%d/%m/%Y}{end}\n"
         f"Các giai đoạn:\n{stages}\n\n"
         "Bạn sẽ nhận tổng kết khi kết thúc mỗi giai đoạn; kết quả từng buổi tập xem trong mục Huấn luyện."
@@ -74,10 +74,10 @@ def stage_closed(stage):
         lines.append(f"So với giai đoạn trước: điểm TB {diff['AvgPerformanceScore']:+.1f}".replace(".", ","))
     send_email(_owner(horse), f"Tổng kết giai đoạn {stage.stage_order} – {stage.stage_name} · {horse.horse_name}", (
         f"Chào {horse.owner.full_name},\n\n"
-        f"Trainer {plan.assignment.trainer.full_name} đã chốt giai đoạn \"{stage.stage_name}\" "
+        f"Huấn luyện viên {plan.assignment.trainer.full_name} đã chốt giai đoạn \"{stage.stage_name}\" "
         f"trong giáo án \"{plan.goal or f'#{plan.id}'}\" của {_label(horse)}.\n\n"
         + "\n".join(lines)
-        + (f"\n\nNhận xét của trainer: {stage.summary_note}" if stage.summary_note else "")
+        + (f"\n\nNhận xét của huấn luyện viên: {stage.summary_note}" if stage.summary_note else "")
         + "\n\nXem chi tiết từng buổi tập trong mục Huấn luyện."
     ))
 
@@ -106,5 +106,5 @@ def session_stopped(session, reason):
         f"Chào {horse.owner.full_name},\n\n"
         f"Buổi tập {session.training_type} ngày {session.session_date:%d/%m/%Y} của {_label(horse)} "
         f"đã bị dừng.\nLý do: {reason}\n\n"
-        "Trainer và bác sĩ thú y của câu lạc bộ đang theo dõi; bạn sẽ được báo khi có thêm thông tin."
+        "Huấn luyện viên và bác sĩ thú y của câu lạc bộ đang theo dõi; bạn sẽ được báo khi có thêm thông tin."
     ))

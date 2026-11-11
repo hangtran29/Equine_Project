@@ -108,3 +108,46 @@ class ChoicesMatchSqlChecks(SimpleTestCase):
                 elif key in checks and not field.choices:
                     problems.append(f"{key}: SQL có CHECK nhưng model chưa khai báo choices")
         self.assertEqual(problems, [])
+
+
+def sql_column_types():
+    """{(bảng, cột): 'VARCHAR' | 'NVARCHAR' | ...}"""
+    types = {}
+    for match in re.finditer(r"CREATE TABLE dbo\.\[?(\w+)\]?\s*\((.*?)\n\);", SQL, re.S):
+        for line in match.group(2).splitlines():
+            m = re.match(r"\s*(\w+)\s+(\w+)", line)
+            if m and m.group(2).upper() in SQL_TYPES:
+                types[(match.group(1), m.group(1))] = m.group(2).upper()
+    return types
+
+
+# Cột VARCHAR chỉ giữ được chữ Latin cơ bản. Chỉ được dùng cho mã / email / số điện thoại / đường dẫn.
+ASCII_ONLY_COLUMNS = {
+    "Email", "Phone", "PasswordHash", "MicrochipNumber", "PassportNumber", "HorseCode", "StallNumber",
+    "FileUrl", "VideoUrl", "ImageUrl", "RoleCode", "PermissionCode", "SpecializationCode", "RuleCode",
+    "SourceKey", "ActionType", "EntityName",
+}
+
+
+class VietnameseTextColumnsTests(SimpleTestCase):
+    def test_free_text_columns_are_unicode(self):
+        """Ô chữ người dùng tự gõ phải là NVARCHAR, nếu không tiếng Việt bị lưu thành dấu '?' (vd 'du?ng d?t')."""
+        types = sql_column_types()
+        problems = []
+        for model in business_models():
+            for field in model._meta.concrete_fields:
+                key = (model._meta.db_table, field.column)
+                if field.get_internal_type() not in ("CharField", "TextField") or field.choices:
+                    continue
+                if types.get(key) == "VARCHAR" and field.column not in ASCII_ONLY_COLUMNS:
+                    problems.append(f"{key[0]}.{key[1]} là VARCHAR, cần NVARCHAR để lưu tiếng Việt")
+        self.assertEqual(problems, [])
+
+    def test_ascii_only_user_fields_reject_vietnamese(self):
+        """Mã người dùng tự nhập nhưng lưu VARCHAR phải chặn chữ có dấu ngay từ API."""
+        from django.core.exceptions import ValidationError
+        from apps.horses.models import Horse, Stall
+        for model, name in ((Horse, "passport_number"), (Horse, "microchip_number"), (Horse, "horse_code"),
+                            (Stall, "stall_number")):
+            with self.subTest(field=name), self.assertRaises(ValidationError):
+                model._meta.get_field(name).run_validators("Chuồng đường")

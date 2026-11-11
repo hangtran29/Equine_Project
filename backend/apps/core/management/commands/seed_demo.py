@@ -166,7 +166,7 @@ class Command(BaseCommand):
             from apps.care.seed import seed_demo as seed_care
             seed_care(club)
 
-        self.stdout.write(self.style.SUCCESS(f"CLB mẫu: {club.club_name} (ClubID={club.id})"))
+        self.stdout.write(self.style.SUCCESS(f"câu lạc bộ mẫu: {club.club_name} (ClubID={club.id})"))
         for role_code, email, state in rows:
             self.stdout.write(f"  {role_code:<14} {email:<26} {state}")
         if any(state != "đã có (giữ mật khẩu cũ)" for _, _, state in rows):

@@ -13,6 +13,8 @@
     "test:injury:browser": "node tests/injury.browser.mjs",
     "test:workflows:browser": "node tests/workflows.browser.mjs",
     "test:training-status": "node --test tests/effectiveTraining.test.mjs",
+    "test:stalls": "node --test tests/campusMap.test.mjs",
+    "test:stalls:browser": "node tests/stalls.browser.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

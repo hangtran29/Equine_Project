@@ -27,6 +27,7 @@ interface Props {
 }
 const fields = {
   examType: ['ExamType', 'Loại khám'], examDate: ['ExamDate', 'Thời điểm khám'], weightKg: ['WeightKg', 'Cân nặng'], heightCm: ['HeightCm', 'Chiều cao'],
+  bodyTemperatureC: ['BodyTemperatureC', 'Thân nhiệt (°C)'], heartRateBpm: ['HeartRateBpm', 'Nhịp tim (lần/phút)'], respiratoryRate: ['RespiratoryRate', 'Nhịp thở (lần/phút)'],
   symptoms: ['Symptoms', 'Triệu chứng / lý do khám'], note: ['Note', 'Kết quả kiểm tra / ghi chú'], diagnosis: ['Diagnosis', 'Chẩn đoán'], injuryLocation: ['InjuryLocation', 'Vị trí chấn thương'],
   treatmentPlan: ['TreatmentPlan', 'Hướng điều trị'], conclusion: ['Conclusion', 'Kết luận'], healthStatus: ['HealthStatus', 'Trạng thái sức khỏe'],
   trainingEligibility: ['TrainingEligibility', 'Điều kiện tập'], restrictionNote: ['RestrictionNote', 'Hạn chế cụ thể'], followUpDate: ['FollowUpDate', 'Ngày chỉ định tái khám'],
@@ -38,6 +39,7 @@ function canonicalTime(value: string) { const local = clubDateTimeInput(value); 
 function initial(draft: MedicalRecord | undefined, horse: Horse, reportId?: string): ExaminationInput {
   return { examType: draft?.examType || (horse.profileStatus === 'PENDING_EXAM' ? 'Initial Exam' : ''),
     healthReportId: reportId, followUpLockId: draft?.followUpLockId || '', trainingSessionId: draft?.trainingSessionId, examDate: clubDateTimeInput(draft?.examDate),
+    bodyTemperatureC: draft?.bodyTemperatureC, heartRateBpm: draft?.heartRateBpm, respiratoryRate: draft?.respiratoryRate,
     weightKg: draft?.weightKg, heightCm: draft?.heightCm, symptoms: draft?.symptoms || '', diagnosis: draft?.diagnosis || '',
     treatmentPlan: draft?.treatmentPlan || '', conclusion: draft?.conclusion || '', healthStatus: draft?.healthStatus || '', trainingEligibility: draft?.trainingEligibility || '',
     restrictionNote: draft?.restrictionNote || '', followUpDate: draft?.followUpDate || '', injuryLocation: draft?.injuryLocation || '', note: draft?.note || '' };
@@ -82,6 +84,9 @@ export default function VetClinicalExam({ horse, currentUser, records = [], draf
     if (!form.examDate || !Number.isFinite(Date.parse(form.examDate))) invalid.examDate = 'Nhập ngày giờ khám hợp lệ.';
     if (form.weightKg != null && (!(form.weightKg > 0) || form.weightKg > 99999.9)) invalid.weightKg = 'Cân nặng phải lớn hơn 0 và không vượt 99.999,9 kg.';
     if (form.heightCm != null && (!(form.heightCm > 0) || form.heightCm > 9999.9)) invalid.heightCm = 'Chiều cao phải lớn hơn 0 và không vượt 9.999,9 cm.';
+    if (form.bodyTemperatureC != null && (form.bodyTemperatureC < 30 || form.bodyTemperatureC > 45)) invalid.bodyTemperatureC = 'Thân nhiệt phải trong khoảng 30–45 °C.';
+    if (form.heartRateBpm != null && (!Number.isInteger(form.heartRateBpm) || form.heartRateBpm < 10 || form.heartRateBpm > 250)) invalid.heartRateBpm = 'Nhịp tim phải là số nguyên trong khoảng 10–250 lần/phút.';
+    if (form.respiratoryRate != null && (!Number.isInteger(form.respiratoryRate) || form.respiratoryRate < 2 || form.respiratoryRate > 150)) invalid.respiratoryRate = 'Nhịp thở phải là số nguyên trong khoảng 2–150 lần/phút.';
     if (form.trainingEligibility === 'Restricted' && !form.restrictionNote.trim()) invalid.restrictionNote = 'Ghi rõ giới hạn khi chọn hạn chế tập.';
     if (form.followUpDate && form.followUpDate < form.examDate.slice(0, 10)) invalid.followUpDate = 'Ngày tái khám không được trước ngày khám.';
     if (final && !form.healthStatus) invalid.healthStatus = 'Chọn trạng thái sức khỏe để chốt bệnh án.';
@@ -177,7 +182,7 @@ export default function VetClinicalExam({ horse, currentUser, records = [], draf
   const mayEdit = currentUser.permissions.includes('MEDICAL_MANAGE') && owns && !reportInvalid && !reportData.error;
   return <main className="page-content vet-workspace vet-exam-workspace" ref={root}>
     <nav className="breadcrumb"><Link to="/vet/horses-needing-exam">Hàng chờ khám</Link><span>/</span><Link to={profile}>{horse.name}</Link><span>/</span><span>{title}</span></nav>
-    <header className="page-heading vet-profile-heading"><div className="vet-profile-identity"><HorseAvatar horseId={horse.id} documents={horse.documents} name={horse.name} /><div><p className="eyebrow">HỒ SƠ THÚ Y</p><h1>{horse.name}</h1><p>{formatHorseCode(horse.code)} · Microchip: {horse.microchipNumber || 'Chưa cập nhật'}</p><p>{title} · Bác sĩ: {record?.vetName || signed?.vetName || currentUser.fullName}</p></div></div><Link className="button button-secondary" to={profile}>Xem hồ sơ ngựa</Link></header>
+    <header className="page-heading vet-profile-heading"><div className="vet-profile-identity"><HorseAvatar horseId={horse.id} documents={horse.documents} name={horse.name} size="profile" /><div><p className="eyebrow">HỒ SƠ THÚ Y</p><h1>{horse.name}</h1><p>{formatHorseCode(horse.code)} · Microchip: {horse.microchipNumber || 'Chưa cập nhật'}</p><p>{title} · Bác sĩ: {record?.vetName || signed?.vetName || currentUser.fullName}</p></div></div><Link className="button button-secondary" to={profile}>Xem hồ sơ ngựa</Link></header>
     <div className="vet-profile-badges"><span className="vet-pill">{signed ? 'Đã chốt' : record ? 'Đang khám · Nháp #' + record.id : 'Chưa bắt đầu'}</span><span className={'vet-pill health-' + horse.healthStatus}>{healthLabels[horse.healthStatus]}</span><span className="vet-pill">{signed ? trainingLabels[signed.trainingEligibility as keyof typeof trainingLabels] : 'Kết luận điều kiện tập: đang đánh giá'}</span></div>
     {conflictNotice && <p role="alert" className="error-message">{conflictNotice}</p>}
     {error && <div className="vet-error-summary" role="alert"><p>{error}</p>{Object.keys(fieldErrors).map(key => <button key={key} type="button" onClick={() => { setReview(false); focus(key as Key); }}>{fields[key as Key][1]}</button>)}</div>}
@@ -194,7 +199,7 @@ export default function VetClinicalExam({ horse, currentUser, records = [], draf
             {isInitial ? <p><strong>Khám đầu vào</strong> · Gắn với đúng hồ sơ tiếp nhận.</p> : control('examType', 'text', undefined, Object.fromEntries(Object.entries(examLabels).filter(([k]) => k !== 'Initial Exam')))}
             {control('examDate', 'datetime-local')}<small>Ngày giờ tại câu lạc bộ ({clubTimezone}).</small>
           </section>
-          <section className="panel" id="exam-findings"><p className="eyebrow">02 · KIỂM TRA</p><h2>Triệu chứng và kết quả kiểm tra</h2>{control('symptoms', 'textarea', 1500)}<div className="horse-form-grid">{control('weightKg', 'number')}{control('heightCm', 'number')}</div>{control('note', 'textarea', 1500)}</section>
+          <section className="panel" id="exam-findings"><p className="eyebrow">02 · KIỂM TRA</p><h2>Triệu chứng và kết quả kiểm tra</h2>{control('symptoms', 'textarea', 1500)}<div className="horse-form-grid">{control('weightKg', 'number')}{control('heightCm', 'number')}{control('bodyTemperatureC', 'number')}{control('heartRateBpm', 'number')}{control('respiratoryRate', 'number')}</div>{control('note', 'textarea', 1500)}</section>
           <section className="panel" id="exam-diagnosis"><p className="eyebrow">03 · CHẨN ĐOÁN</p><h2>Chẩn đoán và chấn thương</h2>{control('diagnosis', 'textarea', 1500)}<HorseInjuryRegionPicker value={form.injuryLocation || ''} onChange={(value: string) => change('injuryLocation', value)} disabled={busy || uncertain} inputId="clinical-injuryLocation" error={fieldErrors.injuryLocation || ''} /><p className="vet-caption">Ghi rõ vùng và bên bị ảnh hưởng. Vùng chọn được lưu cùng phiếu khám dưới dạng mô tả vị trí.</p></section>
           <section className="panel" id="exam-prescription"><p className="eyebrow">04 · ĐIỀU TRỊ</p><h2>Phác đồ và đơn thuốc</h2>{control('treatmentPlan', 'textarea', 3000)}<VetPrescription key={record?.id || 'unsaved'} recordId={record?.id} canEdit onDirtyChange={setDrugDirty} disabled={busy || uncertain} /></section>
           <section className="panel" id="exam-conclusion">

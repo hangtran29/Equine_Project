@@ -69,7 +69,7 @@ class TrainerProfile(models.Model):
 
 
 class TrainerCredential(models.Model):
-    """Bằng cấp / chứng chỉ / giấy phép hành nghề / bằng khen của trainer (minh chứng cho thâm niên nghề)."""
+    """Bằng cấp / chứng chỉ / giấy phép hành nghề / bằng khen của huấn luyện viên (minh chứng cho thâm niên nghề)."""
 
     class Type(models.TextChoices):
         DEGREE = "Degree"            # bằng cấp
@@ -98,7 +98,7 @@ class TrainerCredential(models.Model):
 
 
 class TrainerRaceResult(models.Model):
-    """Một lần ngựa do trainer chuẩn bị ra đường đua (để tính WinRate, CareerWins... sát thực tế)."""
+    """Một lần ngựa do huấn luyện viên chuẩn bị ra đường đua (để tính WinRate, CareerWins... sát thực tế)."""
 
     class RaceClass(models.TextChoices):
         GROUP_1 = "Group 1"
@@ -168,7 +168,7 @@ class HorseAssessment(models.Model):
 
 
 class TrainerHorseAssignment(models.Model):
-    """Trainer phụ trách ngựa. Mỗi ngựa chỉ có 1 phân công Active (UX_TrainerHorseAssignment_OneActivePerHorse)."""
+    """Huấn luyện viên phụ trách ngựa. Mỗi ngựa chỉ có 1 phân công Active (UX_TrainerHorseAssignment_OneActivePerHorse)."""
 
     class Status(models.TextChoices):
         ACTIVE = "Active"
@@ -203,7 +203,7 @@ class TrainerHorseAssignment(models.Model):
 
 
 class HorseWorkRiderPreference(models.Model):
-    """Work Rider quen ngựa (ưu tiên khi xếp buổi tập), không cố định người cưỡi."""
+    """kỵ sĩ tập luyện quen ngựa (ưu tiên khi xếp buổi tập), không cố định người cưỡi."""
 
     id = models.AutoField(primary_key=True, db_column="PreferenceID")
     horse = models.ForeignKey(Horse, on_delete=models.DO_NOTHING, db_column="HorseID",
@@ -336,8 +336,18 @@ class TrainingSession(models.Model):
 
     @property
     def supervising_trainer_id(self):
-        """Trainer có mặt giám sát: Substitute nếu có, không thì trainer phụ trách."""
+        """Huấn luyện viên có mặt giám sát: Substitute nếu có, không thì huấn luyện viên phụ trách."""
         return self.substitute_trainer_id or self.assignment.trainer_id
+
+
+EARLY_END_REASONS = {
+    "Fatigue": "Ngựa có dấu hiệu mệt",
+    "Injury": "Ngựa có dấu hiệu chấn thương",
+    "Weather": "Thời tiết không thuận lợi",
+    "Surface": "Mặt sân không bảo đảm an toàn",
+    "Rider": "Kỵ sĩ gặp sự cố",
+    "Other": "Lý do khác",
+}
 
 
 class TrainingResult(models.Model):
@@ -360,7 +370,12 @@ class TrainingResult(models.Model):
     substitute_observation = models.CharField(max_length=2000, null=True, blank=True,
                                               db_column="SubstituteObservation")
     video_url = models.CharField(max_length=500, null=True, blank=True, db_column="VideoUrl")
+    early_end_reason = models.CharField(max_length=30, null=True, blank=True, choices=list(EARLY_END_REASONS.items()),
+                                        db_column="EarlyEndReason")
+    early_end_note = models.CharField(max_length=1000, null=True, blank=True, db_column="EarlyEndNote")
     recorded_at = models.DateTimeField(default=timezone.now, db_column="RecordedAt")
+
+    EARLY_END_REASONS = EARLY_END_REASONS
 
     class Meta:
         managed = False
@@ -393,7 +408,7 @@ class TrainingReview(models.Model):
 
 
 class TrainingPlanTemplate(models.Model):
-    """Giáo án mẫu của 1 chuyên môn trong CLB (mỗi CLB, mỗi chuyên môn 1 bản). Head Trainer soạn / sửa."""
+    """Giáo án mẫu của 1 chuyên môn trong câu lạc bộ (mỗi câu lạc bộ, mỗi chuyên môn 1 bản). Huấn luyện viên trưởng soạn / sửa."""
 
     id = models.AutoField(primary_key=True, db_column="TemplateID")
     club = models.ForeignKey("accounts.Club", on_delete=models.DO_NOTHING, db_column="ClubID",

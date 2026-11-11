@@ -24,7 +24,7 @@ class OwnerLockAlertTests(TrainingTestCase):
         self.assertEqual((health["TrainingLockCount"], health["IsLockedNow"]), (1, True))
 
         record = vet.post(f"/api/horses/{horse_id}/medical-records", {
-            "ExamType": "Follow-up", "HealthStatus": "Healthy", "TrainingEligibility": "Eligible",
+            "ExamType": "Follow-up", "FollowUpLockID": lock_id, "HealthStatus": "Healthy", "TrainingEligibility": "Eligible",
             "Conclusion": "Hết viêm"}, format="json").data
         vet.post(f"/api/medical-records/{record['MedicalRecordID']}/sign")
         mail.outbox.clear()
@@ -36,3 +36,21 @@ class OwnerLockAlertTests(TrainingTestCase):
         self.assertIn("OWNER_TRAINING_UNLOCKED", types)
         self.assertNotIn("OWNER_TRAINING_LOCKED", types)
         self.assertEqual(self.client_for(self.other_owner).get("/api/notifications").data, [])
+
+
+class StaffLockAlertTests(TrainingTestCase):
+    def test_lock_notification_is_vietnamese_and_reaches_trainers(self):
+        """Thông báo khóa tập: tiêu đề tiếng Việt (không lộ chữ Full/Restricted), có lý do, mức tải, ngày dự kiến;
+        gửi tới chủ ngựa, huấn luyện viên phụ trách và huấn luyện viên trưởng."""
+        horse_id, _, _ = self.ready_horse()
+        res = self.client_for(self.vet).post(f"/api/horses/{horse_id}/training-locks", {
+            "Reason": "Viêm gân", "LockLevel": "Restricted", "MaxIntensity": 20}, format="json")
+        self.assertEqual(res.status_code, 201, res.data)
+        for user, kind in ((self.owner, "OWNER_TRAINING_LOCKED"), (self.trainer, "TRAINING_LOCKED"),
+                           (self.head, "TRAINING_LOCKED")):
+            with self.subTest(user=user.email):
+                note = next(n for n in self.client_for(user).get("/api/notifications").data if n["Type"] == kind)
+                self.assertEqual(note["Title"], "Ngựa bị giới hạn mức tập")
+                self.assertIn("Lý do: Viêm gân", note["Message"])
+                self.assertIn("Mức tải tối đa: 20", note["Message"])
+                self.assertNotIn("Restricted", note["Title"] + note["Message"])

@@ -1,4 +1,5 @@
 """API Flow 4 - chăm sóc và dinh dưỡng. Chi tiết từng API: docs/API.md mục Flow 4."""
+from apps.core.clubtime import now as club_now, today as club_today
 from datetime import date, datetime, time
 
 from drf_spectacular.utils import extend_schema
@@ -7,7 +8,10 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.permissions import BasePermission
+from apps.core.access import care_horses, require_care_access
 
+from apps.core.serializers import fmt_datetime
 from apps.core.params import date_param, flag_param, int_param
 from apps.core.permissions import HasAnyPermission, require_club_user
 from apps.horses.views import get_visible_horse
@@ -25,6 +29,19 @@ from .serializers import (
 STAFF_VIEW = "HORSE_VIEW"
 
 
+class CareAccess(BasePermission):
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        require_care_access(request.user)
+        return request.user.has_perm(STAFF_VIEW)
+
+
+def diet_scope(user, qs):
+    qs = qs.filter(horse__in=care_horses(user))
+    return qs.filter(status__in=services.IN_FORCE) if user.has_role("GROOM") else qs
+
+
 
 
 def _meals(values):
@@ -36,12 +53,12 @@ def _meals(values):
 # Khẩu phần
 # ---------------------------------------------------------------------------
 def can_create_diet(user):
-    """Head Trainer lập khẩu phần (cột CreatedByHeadTrainerID)."""
+    """Huấn luyện viên trưởng lập khẩu phần (cột CreatedByHeadTrainerID)."""
     return user.has_perm("DIET_MANAGE") and user.has_role("HEAD_TRAINER")
 
 
 def can_review_diet(user):
-    """Vet duyệt / trả về / điều chỉnh khẩu phần."""
+    """Vet góp ý và yêu cầu Head Trainer sửa khẩu phần."""
     return user.has_perm("DIET_MANAGE") and user.has_perm("MEDICAL_MANAGE")
 
 
@@ -51,16 +68,16 @@ class HorseDietPlanView(APIView):
     POST /api/horses/<HorseID>/diet-plans   Head Trainer lập khẩu phần (Pending, chờ Vet duyệt)
     """
 
-    permission_classes = [HasAnyPermission(STAFF_VIEW)]
+    permission_classes = [CareAccess]
 
     def get(self, request, horse_id):
         horse = get_visible_horse(request.user, horse_id)
         plans = horse.diet_plans.select_related("created_by", "reviewed_by", "horse").prefetch_related("meals")
-        return Response(DietPlanSerializer(plans, many=True).data)
+        return Response(DietPlanSerializer(diet_scope(request.user, plans), many=True).data)
 
     def post(self, request, horse_id):
         if not can_create_diet(request.user):
-            raise PermissionDenied("Chỉ Head Trainer lập khẩu phần.")
+            raise PermissionDenied("Chỉ Huấn luyện viên trưởng lập khẩu phần.")
         horse = get_visible_horse(request.user, horse_id)
         data = DietPlanWriteSerializer(data=request.data)
         data.is_valid(raise_exception=True)
@@ -76,16 +93,18 @@ class DietContextView(APIView):
     khóa tập (Flow 3), cân nặng gần nhất, khẩu phần hiện tại và gợi ý (Notes).
     """
 
-    permission_classes = [HasAnyPermission(STAFF_VIEW)]
+    permission_classes = [CareAccess]
 
     def get(self, request, horse_id):
+        if not request.user.has_perm("DIET_MANAGE"):
+            raise PermissionDenied("Ngữ cảnh lập khẩu phần dành cho Head Trainer và Vet.")
         return Response(services.diet_context(get_visible_horse(request.user, horse_id)))
 
 
 class CurrentDietView(APIView):
     """GET /api/horses/<HorseID>/current-diet - khẩu phần đang áp dụng hôm nay (null nếu chưa có)."""
 
-    permission_classes = [HasAnyPermission(STAFF_VIEW)]
+    permission_classes = [CareAccess]
 
     def get(self, request, horse_id):
         plan = services.current_diet_plan(get_visible_horse(request.user, horse_id))
@@ -100,10 +119,10 @@ class DietPlanViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets
     """
 
     serializer_class = DietPlanSerializer
-    permission_classes = [HasAnyPermission(STAFF_VIEW)]
+    permission_classes = [CareAccess]
 
     def get_queryset(self):
-        qs = DietPlan.objects.filter(horse__club_id=self.request.user.club_id).select_related(
+        qs = diet_scope(self.request.user, DietPlan.objects.all()).select_related(
             "horse", "created_by", "reviewed_by").prefetch_related("meals")
         p = self.request.query_params
         if p.get("Status"):
@@ -117,14 +136,14 @@ class DietPlanViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets
 
     def _decision(self, request):
         if not can_review_diet(request.user):
-            raise PermissionDenied("Chỉ Vet duyệt / điều chỉnh khẩu phần.")
+            raise PermissionDenied("Chỉ bác sĩ thú y duyệt / điều chỉnh khẩu phần.")
         data = VetDietDecisionSerializer(data=request.data, partial=True)
         data.is_valid(raise_exception=True)
         return dict(data.validated_data)
 
     def partial_update(self, request, pk=None):
         if not can_create_diet(request.user):
-            raise PermissionDenied("Chỉ Head Trainer sửa khẩu phần.")
+            raise PermissionDenied("Chỉ Huấn luyện viên trưởng sửa khẩu phần.")
         data = DietPlanWriteSerializer(data=request.data, partial=True)
         data.is_valid(raise_exception=True)
         values = dict(data.validated_data)
@@ -133,8 +152,9 @@ class DietPlanViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets
 
     @action(detail=True, methods=["post"])
     def approve(self, request, pk=None):
-        values = self._decision(request)
-        return self._out(services.approve_diet_plan(self.get_object(), request.user, values.get("VetNote")))
+        if not can_create_diet(request.user):
+            raise PermissionDenied("Chỉ Head Trainer chốt khẩu phần; Vet góp ý và đặt hạn chế y tế.")
+        return self._out(services.approve_diet_plan(self.get_object(), request.user))
 
     @action(detail=True, methods=["post"])
     def reject(self, request, pk=None):
@@ -164,11 +184,16 @@ class CareTaskViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets
     """
 
     serializer_class = CareTaskSerializer
-    permission_classes = [HasAnyPermission(STAFF_VIEW)]
+    permission_classes = [CareAccess]
 
     def get_queryset(self):
-        qs = CareTask.objects.filter(horse__club_id=self.request.user.club_id).select_related(
+        user = self.request.user
+        qs = CareTask.objects.filter(horse__club_id=user.club_id).select_related(
             "horse", "groom", "assigned_by")
+        if user.has_role("GROOM"):
+            qs = qs.filter(groom=user)
+        else:
+            qs = qs.filter(horse__in=care_horses(user))
         p = self.request.query_params
         if p.get("Date"):
             day = date_param(p, "Date")
@@ -184,6 +209,10 @@ class CareTaskViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets
             qs = qs.filter(groom_id=int_param(p, "GroomID"))
         if p.get("Status"):
             qs = qs.filter(status=p["Status"])
+        if p.get("TaskType"):
+            qs = qs.filter(task_type=p["TaskType"])
+        if flag_param(p, "Unassigned"):
+            qs = qs.filter(groom__isnull=True)
         if p.get("Auto") in ("1", "true"):
             qs = qs.filter(rule_code__isnull=False)
         if flag_param(p, "mine"):
@@ -194,25 +223,25 @@ class CareTaskViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets
         club = request.user.club
         if club is not None:
             p = request.query_params
-            day = date_param(p, "Date") if p.get("Date") else date.today()
-            automation.generate_for_day(club, date.today())
-            if day != date.today():
+            day = date_param(p, "Date") if p.get("Date") else club_today()
+            automation.generate_for_day(club, club_today())
+            if day != club_today():
                 automation.generate_for_day(club, day)
         return super().list(request, *args, **kwargs)
 
     @extend_schema(request=GenerateTasksSerializer)
     @action(detail=False, methods=["post"])
     def generate(self, request):
-        if not services.is_care_assigner(request.user):
+        if not (request.user.has_perm("TRAINER_ASSIGN") or request.user.has_perm("CLUB_MANAGE")):
             raise PermissionDenied("Chỉ Head Trainer / Manager sinh việc chăm sóc.")
         data = GenerateTasksSerializer(data=request.data)
         data.is_valid(raise_exception=True)
         v = data.validated_data
-        return Response(automation.generate_range(request.user.club, v.get("Date") or date.today(), v["Days"],
+        return Response(automation.generate_range(request.user.club, v.get("Date") or club_today(), v["Days"],
                                                   request.user))
 
     def _out(self, task, code=status.HTTP_200_OK):
-        return Response(CareTaskSerializer(self.get_queryset().get(pk=task.pk)).data, status=code)
+        return Response(CareTaskSerializer(task).data, status=code)
 
     def _require_care_role(self):
         if not (self.request.user.has_perm("CARE_MANAGE") or services.is_care_assigner(self.request.user)):
@@ -220,8 +249,8 @@ class CareTaskViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets
 
     def create(self, request):
         if not services.is_care_assigner(request.user):
-            raise PermissionDenied("Groom không tự tạo việc: việc hằng ngày do hệ thống sinh theo chỉ tiêu, "
-                                   "việc khác do Head Trainer / Manager giao.")
+            raise PermissionDenied("người chăm sóc ngựa không tự tạo việc: việc hằng ngày do hệ thống sinh theo chỉ tiêu, "
+                                   "việc khác do Huấn luyện viên trưởng / Quản lý câu lạc bộ giao.")
         data = CareTaskWriteSerializer(data=request.data)
         data.is_valid(raise_exception=True)
         values = dict(data.validated_data)
@@ -242,7 +271,8 @@ class CareTaskViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets
     def complete(self, request, pk=None):
         data = NoteSerializer(data=request.data or {})
         data.is_valid(raise_exception=True)
-        return self._out(services.complete_care_task(self.get_object(), request.user, data.validated_data.get("Note")))
+        return self._out(services.complete_care_task(self.get_object(), request.user, data.validated_data.get("Note"),
+                                                    data.validated_data.get("FeedingOutcome")))
 
     @action(detail=True, methods=["post"])
     def skip(self, request, pk=None):
@@ -253,9 +283,9 @@ class CareTaskViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets
 
 
 class CareRuleListView(APIView):
-    """GET /api/care-rules - chỉ tiêu sinh việc chăm sóc của CLB (tạo mặc định nếu chưa có)."""
+    """GET /api/care-rules - chỉ tiêu sinh việc chăm sóc của câu lạc bộ (tạo mặc định nếu chưa có)."""
 
-    permission_classes = [HasAnyPermission(STAFF_VIEW)]
+    permission_classes = [CareAccess]
 
     def get(self, request):
         rules = automation.ensure_rules(request.user.club)
@@ -265,12 +295,14 @@ class CareRuleListView(APIView):
 class CareRuleDetailView(APIView):
     """PATCH /api/care-rules/<RuleCode> {"IsActive", "TimeOfDay", "OffsetMinutes", "Title"} - Head Trainer / Manager."""
 
-    permission_classes = [HasAnyPermission(STAFF_VIEW)]
+    permission_classes = [CareAccess]
 
     @extend_schema(request=CareTaskRuleSerializer)
     def patch(self, request, rule_code):
-        if not services.is_care_assigner(request.user):
+        if not (request.user.has_perm("TRAINER_ASSIGN") or request.user.has_perm("CLUB_MANAGE")):
             raise PermissionDenied("Chỉ Head Trainer / Manager sửa chỉ tiêu chăm sóc.")
+        if rule_code == "ICE_SOAK_WHEN_LOCKED":
+            raise ValidationError({"RuleCode": ["Ngâm chân lạnh được quản lý bằng chỉ định chăm sóc riêng của Vet."]})
         rule = automation.ensure_rules(request.user.club).get(rule_code)
         if rule is None:
             raise ValidationError({"RuleCode": ["Chỉ tiêu không tồn tại."]})
@@ -286,7 +318,10 @@ class HorseGroomView(APIView):
     DELETE /api/horses/<HorseID>/groom   bỏ Groom phụ trách (việc mới chia cho Groom ít việc nhất)
     """
 
-    permission_classes = [HasAnyPermission(STAFF_VIEW)]
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return [HasAnyPermission(STAFF_VIEW, "OWNER_VIEW")()]
+        return [CareAccess()]
 
     @staticmethod
     def _body(link):
@@ -298,8 +333,8 @@ class HorseGroomView(APIView):
         return Response(self._body(HorseGroom.objects.filter(horse=horse).select_related("groom").first()))
 
     def _assigner(self, request, horse_id):
-        if not services.is_care_assigner(request.user):
-            raise PermissionDenied("Chỉ Head Trainer / Manager giao Groom phụ trách ngựa.")
+        if not request.user.has_perm("CLUB_MANAGE"):
+            raise PermissionDenied("Chỉ Manager phân công Groom phụ trách ngựa.")
         return get_visible_horse(request.user, horse_id)
 
     @extend_schema(request=HorseGroomSerializer)
@@ -334,8 +369,8 @@ class InventoryItemViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vie
 
     def get_permissions(self):
         if self.action in ("list", "retrieve"):
-            return [HasAnyPermission(*INVENTORY_ANY)()]
-        return [HasAnyPermission("INVENTORY_MANAGE")()]
+            return [CareAccess(), HasAnyPermission(*INVENTORY_ANY)()]
+        return [CareAccess(), HasAnyPermission("INVENTORY_MANAGE")()]
 
     def get_queryset(self):
         qs = InventoryItem.objects.filter(club_id=self.request.user.club_id)
@@ -390,7 +425,7 @@ class InventoryRequestViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, 
     }
 
     def get_permissions(self):
-        return [HasAnyPermission(*self.action_permissions.get(self.action, INVENTORY_ANY))()]
+        return [CareAccess(), HasAnyPermission(*self.action_permissions.get(self.action, INVENTORY_ANY))()]
 
     def get_queryset(self):
         user = self.request.user
@@ -418,7 +453,7 @@ class InventoryRequestViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, 
         data = InventoryApproveSerializer(data=request.data or {})
         data.is_valid(raise_exception=True)
         approved = {i["InventoryItemID"]: i["ApprovedQuantity"] for i in data.validated_data.get("Items", [])}
-        return self._out(services.approve_inventory_request(self.get_object(), request.user, approved))
+        return self._out(services.approve_inventory_request(self.get_object(), request.user, approved, data.validated_data["Note"]))
 
     @action(detail=True, methods=["post"])
     def reject(self, request, pk=None):
@@ -431,3 +466,49 @@ class InventoryRequestViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, 
     def cancel(self, request, pk=None):
         return self._out(services.cancel_inventory_request(self.get_object(), request.user))
 
+
+
+class GroomTrainingTodayView(APIView):
+    """
+    GET /api/care/training-today?Date=YYYY-MM-DD - lịch tập trong ngày của các ngựa mình đang chăm sóc (CS01),
+    để Người chăm sóc chuẩn bị ngựa trước giờ tập. Mỗi buổi kèm việc chăm sóc kế tiếp sau giờ tập (nếu có).
+    Quản lý / HLV trưởng xem được cho toàn câu lạc bộ.
+    """
+
+    permission_classes = [CareAccess]
+
+    def get(self, request):
+        from apps.training.models import TrainingSession
+
+        user = request.user
+        raw = request.query_params.get("Date")
+        try:
+            day = date.fromisoformat(raw) if raw else club_today()
+        except ValueError:
+            raise ValidationError({"Date": ["Ngày không đúng định dạng dd/mm/yyyy."]}) from None
+        sessions = TrainingSession.objects.filter(session_date=day, stage__plan__assignment__horse__in=care_horses(user))
+        if not user.has_perm("CLUB_MANAGE") and not user.has_perm("TRAINER_ASSIGN"):
+            horse_ids = HorseGroom.objects.filter(groom=user).values_list("horse_id", flat=True)
+            sessions = sessions.filter(stage__plan__assignment__horse_id__in=list(horse_ids))
+        sessions = sessions.select_related("stage__plan__assignment__horse", "stage__plan__assignment__trainer",
+                                           "work_rider", "substitute_trainer").order_by("start_time", "id")
+        rows = []
+        for s in sessions:
+            horse = s.horse
+            start = datetime.combine(day, s.start_time)
+            follow = (CareTask.objects.filter(horse=horse, scheduled_at__gte=start, scheduled_at__date=day,
+                                              status=CareTask.Status.PENDING).order_by("scheduled_at").first()
+                      or CareTask.objects.filter(horse=horse, scheduled_at__gte=start, scheduled_at__date=day)
+                      .order_by("scheduled_at").first())
+            supervisor = s.substitute_trainer or s.assignment.trainer
+            rows.append({
+                "TrainingSessionID": s.id, "HorseID": horse.id, "HorseName": horse.horse_name,
+                "StartTime": s.start_time, "EndTime": s.end_time, "DurationPlannedMinutes": s.duration_planned_minutes,
+                "TrainingType": s.training_type, "DistancePlannedKm": float(s.distance_planned_km) if s.distance_planned_km is not None else None,
+                "TrainerName": supervisor.full_name if supervisor else None,
+                "TrainerIsHead": bool(supervisor and "HEAD_TRAINER" in supervisor.role_codes),
+                "WorkRiderName": s.work_rider.full_name, "Status": s.status,
+                "NextCareTask": {"CareTaskID": follow.id, "TaskType": follow.task_type, "Note": follow.note,
+                                 "ScheduledAt": fmt_datetime(follow.scheduled_at), "Status": follow.status} if follow else None,
+            })
+        return Response(rows)

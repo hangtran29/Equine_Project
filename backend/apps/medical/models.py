@@ -3,6 +3,7 @@ Y tế (horse_v2.sql, không có migrations):
   Flow 1 - phiếu khám đầu vào: MedicalRecord, MedicalRecordAmendment; lịch trực bác sĩ: VetDutyShift.
   Flow 3 - y tế: TrainingLock, Treatment, Vaccination, MedicalSchedule, HealthReport, HealthReportNote.
 """
+from apps.core.clubtime import now as club_now
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
@@ -49,6 +50,11 @@ class MedicalRecord(models.Model):
     exam_type = models.CharField(max_length=50, choices=ExamType.choices, db_column="ExamType")
     weight_kg = models.DecimalField(max_digits=6, decimal_places=1, null=True, blank=True, db_column="WeightKg")
     height_cm = models.DecimalField(max_digits=5, decimal_places=1, null=True, blank=True, db_column="HeightCm")
+    # chỉ số sinh hiệu lúc khám
+    body_temperature_c = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True,
+                                             db_column="BodyTemperatureC")
+    heart_rate_bpm = models.IntegerField(null=True, blank=True, db_column="HeartRateBpm")
+    respiratory_rate = models.IntegerField(null=True, blank=True, db_column="RespiratoryRate")
     symptoms = models.CharField(max_length=1500, null=True, blank=True, db_column="Symptoms")
     diagnosis = models.CharField(max_length=1500, null=True, blank=True, db_column="Diagnosis")
     conclusion = models.CharField(max_length=1500, null=True, blank=True, db_column="Conclusion")
@@ -62,6 +68,8 @@ class MedicalRecord(models.Model):
     )
     restriction_note = models.CharField(max_length=1000, null=True, blank=True, db_column="RestrictionNote")
     follow_up_date = models.DateField(null=True, blank=True, db_column="FollowUpDate")
+    follow_up_lock = models.ForeignKey("TrainingLock", on_delete=models.DO_NOTHING, null=True, blank=True,
+                                       db_column="FollowUpLockID", related_name="follow_up_records")
     note = models.CharField(max_length=1500, null=True, blank=True, db_column="Note")
 
     record_status = models.CharField(
@@ -95,7 +103,7 @@ class MedicalRecordAmendment(models.Model):
     amended_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.DO_NOTHING, db_column="AmendedBy", related_name="+"
     )
-    amended_at = models.DateTimeField(default=timezone.now, db_column="AmendedAt")
+    amended_at = models.DateTimeField(default=club_now, db_column="AmendedAt")
     reason = models.CharField(max_length=1000, db_column="Reason")
     amended_content = models.TextField(db_column="AmendedContent")
 
@@ -127,7 +135,7 @@ class VetDutyShift(models.Model):
     note = models.CharField(max_length=500, null=True, blank=True, db_column="Note")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.DO_NOTHING, db_column="CreatedBy",
                                    related_name="+")
-    created_at = models.DateTimeField(default=timezone.now, db_column="CreatedAt")
+    created_at = models.DateTimeField(default=club_now, db_column="CreatedAt")
 
     class Meta:
         managed = False
@@ -176,7 +184,7 @@ class TrainingLock(models.Model):
         """Ngày `day` có nằm trong thời gian khóa không (so theo ngày, giống trigger SQL)."""
         if day < self.lock_start_date.date():
             return False
-        return self.lock_end_date is None or day <= self.lock_end_date.date()
+        return self.lock_status == self.Status.ACTIVE or self.lock_end_date is None or day <= self.lock_end_date.date()
 
 
 class Treatment(models.Model):
@@ -257,7 +265,7 @@ class MedicalSchedule(models.Model):
 
 
 class HealthReport(models.Model):
-    """Báo cáo sự cố sức khỏe: Groom, Work Rider, Trainer, Head Trainer báo ngang quyền; Vet trực xử lý."""
+    """Báo cáo sự cố sức khỏe: người chăm sóc ngựa, kỵ sĩ tập luyện, Huấn luyện viên, Huấn luyện viên trưởng báo ngang quyền; bác sĩ thú y trực xử lý."""
 
     class Severity(models.TextChoices):
         URGENT = "Urgent"
@@ -278,7 +286,7 @@ class HealthReport(models.Model):
                                              related_name="health_reports")
     else:  # chưa có Flow 2: giữ cột để model khớp bảng, chưa dùng
         training_session_id = models.IntegerField(null=True, blank=True, db_column="TrainingSessionID")
-    reported_at = models.DateTimeField(default=timezone.now, db_column="ReportedAt")
+    reported_at = models.DateTimeField(default=club_now, db_column="ReportedAt")
     severity = models.CharField(max_length=10, choices=Severity.choices, default=Severity.NORMAL,
                                 db_column="Severity")
     description = models.CharField(max_length=2500, db_column="Description")
@@ -295,6 +303,8 @@ class HealthReport(models.Model):
         managed = False
         db_table = "HealthReport"
         ordering = ["-reported_at", "-id"]
+        constraints = [models.UniqueConstraint(fields=["horse"], condition=~models.Q(status="Resolved"),
+                                               name="UX_HealthReport_OneOpen")]
 
 
 class HealthReportNote(models.Model):
@@ -303,10 +313,61 @@ class HealthReportNote(models.Model):
                                related_name="notes")
     note_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.DO_NOTHING, db_column="NoteBy",
                                 related_name="+")
-    note_at = models.DateTimeField(default=timezone.now, db_column="NoteAt")
+    note_at = models.DateTimeField(default=club_now, db_column="NoteAt")
     content = models.CharField(max_length=2000, db_column="Content")
 
     class Meta:
         managed = False
         db_table = "HealthReportNote"
         ordering = ["note_at", "id"]
+
+
+class HealthReportAttachment(models.Model):
+    id = models.AutoField(primary_key=True, db_column="HealthReportAttachmentID")
+    horse = models.ForeignKey(Horse, on_delete=models.DO_NOTHING, db_column="HorseID", related_name="+")
+    report = models.ForeignKey(HealthReport, on_delete=models.DO_NOTHING, null=True, blank=True,
+                               db_column="HealthReportID", related_name="attachments")
+    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.DO_NOTHING, db_column="UploadedBy", related_name="+")
+    file_url = models.CharField(max_length=500, db_column="FileUrl")
+    uploaded_at = models.DateTimeField(default=club_now, db_column="UploadedAt")
+
+    class Meta:
+        managed = False
+        db_table = "HealthReportAttachment"
+
+
+class InjuryMarker(models.Model):
+    id = models.AutoField(primary_key=True, db_column="InjuryMarkerID")
+    medical_record = models.ForeignKey(MedicalRecord, on_delete=models.DO_NOTHING, db_column="MedicalRecordID", related_name="injury_markers")
+    body_region = models.CharField(max_length=30, db_column="BodyRegion")
+    body_side = models.CharField(max_length=5, choices=[("left", "Trái"), ("right", "Phải")], db_column="BodySide")
+    view = models.CharField(max_length=5, db_column="DiagramView")
+    x_ratio = models.FloatField(db_column="XRatio")
+    y_ratio = models.FloatField(db_column="YRatio")
+    diagram_version = models.CharField(max_length=50, db_column="DiagramVersion")
+    description = models.CharField(max_length=1500, db_column="Description")
+    severity = models.CharField(max_length=20, db_column="Severity")
+    status = models.CharField(max_length=20, db_column="Status")
+    detected_at = models.DateField(db_column="DetectedAt")
+    notes = models.CharField(max_length=2000, blank=True, db_column="Notes")
+
+    class Meta:
+        managed = False
+        db_table = "InjuryMarker"
+        ordering = ["id"]
+
+
+class InjuryAssessment(models.Model):
+    id = models.AutoField(primary_key=True, db_column="InjuryAssessmentID")
+    marker = models.ForeignKey(InjuryMarker, on_delete=models.DO_NOTHING, db_column="InjuryMarkerID", related_name="history")
+    medical_record = models.ForeignKey(MedicalRecord, on_delete=models.DO_NOTHING, db_column="MedicalRecordID", related_name="injury_assessments")
+    date = models.DateField(db_column="AssessmentDate")
+    status = models.CharField(max_length=20, db_column="Status")
+    comment = models.CharField(max_length=1500, db_column="Comment")
+    author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.DO_NOTHING, db_column="AuthorID", related_name="+")
+    at = models.DateTimeField(default=club_now, db_column="CreatedAt")
+
+    class Meta:
+        managed = False
+        db_table = "InjuryAssessment"
+        ordering = ["date", "at", "id"]

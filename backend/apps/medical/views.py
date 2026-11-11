@@ -3,18 +3,20 @@ API y tế.
 Flow 1 - phiếu khám: /vet/pending-initial-exams, /horses/<id>/medical-records, /medical-records/<id>[/sign|/amendments].
 Flow 3 - Training Lock, thuốc điều trị, tiêm phòng, lịch y tế, báo cáo sức khỏe (xem docs/API.md mục 6).
 """
+from apps.core.clubtime import now as club_now, today as club_today
 from datetime import date, timedelta
 
 from django.db.models import Case, Exists, IntegerField, OuterRef, Q, Value, When
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.exceptions import NotFound, ValidationError, PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.params import date_param, flag_param, int_param
 from apps.core.permissions import HasAnyPermission
 from apps.core.serializers import fmt_datetime
+from apps.core.access import operational_horses, operational_horse
 from apps.horses.models import Horse, RegistrationRequest
 from apps.horses.views import get_visible_horse
 
@@ -35,7 +37,9 @@ SIGN = "MEDICAL_SIGN"
 
 def records_visible_to(user):
     """Nhân sự CLB thấy phiếu đã chốt của ngựa trong CLB; Vet thấy thêm phiếu nháp."""
-    queryset = MedicalRecord.objects.select_related("vet", "horse").filter(horse__club_id=user.club_id)
+    if user.has_role("GROOM") or user.has_role("WORK_RIDER"):
+        return MedicalRecord.objects.none()
+    queryset = MedicalRecord.objects.select_related("vet", "horse").filter(horse__in=operational_horses(user))
     if not user.has_perm(VET):
         queryset = queryset.filter(record_status=MedicalRecord.RecordStatus.SIGNED)
     return queryset
@@ -67,7 +71,7 @@ class VetDutyShiftListView(APIView):
 
     def get(self, request):
         p = request.query_params
-        start = date_param(p, "From") if p.get("From") else date.today()
+        start = date_param(p, "From") if p.get("From") else club_today()
         end = date_param(p, "To") if p.get("To") else start + timedelta(days=6)
         if end < start:
             raise ValidationError({"To": ["Ngày kết thúc phải sau ngày bắt đầu."]})
@@ -86,7 +90,7 @@ class VetDutyShiftListView(APIView):
 
 
 class VetDutyShiftDetailView(APIView):
-    """DELETE /api/vet-duty-shifts/<id> - Manager bỏ ca trực (ca chưa qua)."""
+    """DELETE /api/vet-duty-shifts/<id> - Quản lý câu lạc bộ bỏ ca trực (ca chưa qua)."""
 
     permission_classes = [HasAnyPermission("CLUB_MANAGE")]
 
@@ -117,11 +121,11 @@ class PendingInitialExamView(APIView):
     permission_classes = [HasAnyPermission(VET)]
 
     def get(self, request):
-        now = timezone.now()
+        now = club_now()
         requests = (
             RegistrationRequest.objects.filter(status=RegistrationRequest.Status.PENDING_EXAM,
                                                club_id=request.user.club_id)
-            .select_related("horse")
+            .select_related("horse", "horse__owner")
             .annotate(signed=Exists(MedicalRecord.objects.filter(
                 registration_request=OuterRef("pk"), exam_type=MedicalRecord.ExamType.INITIAL,
                 record_status=MedicalRecord.RecordStatus.SIGNED)))
@@ -146,6 +150,10 @@ class PendingInitialExamView(APIView):
                 "VerifiedAt": fmt_datetime(horse.verified_at),
                 "DraftMedicalRecordID": draft.id if draft else None,
                 "DraftVetID": draft.vet_id if draft else None,
+                "DraftVetName": draft.vet.full_name if draft else None,
+                "OwnerName": horse.owner.full_name,
+                # hồ sơ từng bị từ chối rồi gửi lại: bác sĩ khám lại từ đầu
+                "IsReExam": horse.registration_requests.filter(request_date__lt=item.request_date).exists(),
             })
         return Response(result)
 
@@ -211,7 +219,7 @@ class MedicalRecordSignView(APIView):
         data.is_valid(raise_exception=True)
         lock_values = data.validated_data.get("TrainingLock")
         if lock_values and record.exam_type == MedicalRecord.ExamType.INITIAL:
-            raise ValidationError({"TrainingLock": ["Khám đầu vào không tạo Training Lock."]})
+            raise ValidationError({"TrainingLock": ["Khám đầu vào không tạo Khóa tập."]})
         record, lock = services.sign_record(record, request.user, dict(lock_values) if lock_values else None)
         body = MedicalRecordSerializer(record).data
         body["TrainingLock"] = lock_body(lock) if lock else None
@@ -242,7 +250,8 @@ class MedicalRecordAmendmentView(APIView):
 # Hỗ trợ
 # ---------------------------------------------------------------------------
 def club_object(model, user, pk, horse_path="horse__club_id", message="Không tìm thấy."):
-    obj = model.objects.filter(pk=pk, **{horse_path: user.club_id}).first()
+    path = horse_path.replace("__club_id", "__in")
+    obj = model.objects.filter(pk=pk, **{path: operational_horses(user)}).first()
     if obj is None:
         raise NotFound(message)
     return obj
@@ -263,7 +272,7 @@ class TrainingLockListView(APIView):
     permission_classes = [HasAnyPermission(STAFF_VIEW)]
 
     def get(self, request):
-        locks = TrainingLock.objects.filter(horse__club_id=request.user.club_id).select_related("horse", "created_by")
+        locks = TrainingLock.objects.filter(horse__in=operational_horses(request.user)).select_related("horse", "created_by")
         p = request.query_params
         if p.get("HorseID"):
             locks = locks.filter(horse_id=int_param(p, "HorseID"))
@@ -273,7 +282,7 @@ class TrainingLockListView(APIView):
 
 
 class HorseTrainingLockView(APIView):
-    """POST /api/horses/<HorseID>/training-locks - Vet khóa huấn luyện (tự hủy buổi tập bị ảnh hưởng)."""
+    """POST /api/horses/<HorseID>/training-locks - bác sĩ thú y khóa huấn luyện (tự hủy buổi tập bị ảnh hưởng)."""
 
     permission_classes = [HasAnyPermission("TRAINING_LOCK_MANAGE")]
 
@@ -313,7 +322,8 @@ class TrainingLockReleaseView(APIView):
         data = ReleaseLockSerializer(data=request.data or {})
         data.is_valid(raise_exception=True)
         return Response(TrainingLockSerializer(services.release_lock(lock, request.user,
-                                                                     data.validated_data.get("Note"))).data)
+                                                                     data.validated_data.get("Note"),
+                                                                     data.validated_data.get("FollowUpMedicalRecordID"))).data)
 
 
 # ---------------------------------------------------------------------------
@@ -358,13 +368,15 @@ class HorseTreatmentView(APIView):
     permission_classes = [HasAnyPermission(STAFF_VIEW)]
 
     def get(self, request, horse_id):
+        if request.user.has_role("GROOM") or request.user.has_role("WORK_RIDER"):
+            raise PermissionDenied("Hướng dẫn y tế cần thiết được cung cấp qua công việc được giao.")
         horse = get_visible_horse(request.user, horse_id)
         items = Treatment.objects.filter(medical_record__horse=horse,
                                          medical_record__record_status=MedicalRecord.RecordStatus.SIGNED)
         if request.user.has_perm(VET):
             items = Treatment.objects.filter(medical_record__horse=horse)
         if flag_param(request.query_params, "WithdrawalActive"):
-            items = items.filter(withdrawal_until__gte=date.today())
+            items = items.filter(withdrawal_until__gte=club_today())
         return Response(TreatmentSerializer(items, many=True).data)
 
 
@@ -392,14 +404,14 @@ class VaccinationListView(APIView):
         return [HasAnyPermission(STAFF_VIEW)()]
 
     def get(self, request, horse_id=None):
-        items = Vaccination.objects.filter(horse__club_id=request.user.club_id).select_related("horse", "vet")
+        items = Vaccination.objects.filter(horse__in=operational_horses(request.user)).select_related("horse", "vet")
         p = request.query_params
         if horse_id or p.get("HorseID"):
             items = items.filter(horse_id=horse_id or int_param(p, "HorseID"))
         if p.get("Status"):
             items = items.filter(status=p["Status"])
         if p.get("DueWithinDays"):
-            limit = date.today() + timedelta(days=int_param(p, "DueWithinDays"))
+            limit = club_today() + timedelta(days=int_param(p, "DueWithinDays"))
             items = items.filter(Q(status="Scheduled", vaccination_date__lte=limit)
                                  | Q(status="Completed", next_due_date__lte=limit))
         return Response(VaccinationSerializer(items, many=True).data)
@@ -444,7 +456,7 @@ class MedicalScheduleListView(APIView):
         return [HasAnyPermission(STAFF_VIEW)()]
 
     def get(self, request, horse_id=None):
-        items = MedicalSchedule.objects.filter(horse__club_id=request.user.club_id).select_related("horse", "vet")
+        items = MedicalSchedule.objects.filter(horse__in=operational_horses(request.user)).select_related("horse", "vet")
         p = request.query_params
         if horse_id or p.get("HorseID"):
             items = items.filter(horse_id=horse_id or int_param(p, "HorseID"))
@@ -492,8 +504,8 @@ REPORTERS = ("HEALTH_REPORT",)
 
 
 def reports_visible_to(user):
-    return HealthReport.objects.filter(horse__club_id=user.club_id).select_related(
-        "horse", "reported_by", "vet").prefetch_related("notes__note_by", "reported_by__roles")
+    return HealthReport.objects.filter(horse__in=operational_horses(user)).select_related(
+        "horse", "reported_by", "vet").prefetch_related("notes__note_by", "reported_by__roles", "attachments")
 
 
 class HealthReportListView(APIView):
@@ -535,7 +547,8 @@ class HealthReportListView(APIView):
         report = services.create_health_report(horse, request.user, dict(data.validated_data))
         body = HealthReportSerializer(reports_visible_to(request.user).get(pk=report.pk)).data
         body["StoppedSession"] = report.stopped_session
-        return Response(body, status=status.HTTP_201_CREATED)
+        body["ReusedOpenReport"] = getattr(report, "reused_open_report", False)
+        return Response(body, status=status.HTTP_200_OK if body["ReusedOpenReport"] else status.HTTP_201_CREATED)
 
 
 def get_report(user, report_id):
@@ -561,12 +574,13 @@ class HealthReportNoteView(APIView):
         report = get_report(request.user, report_id)
         data = ContentSerializer(data=request.data)
         data.is_valid(raise_exception=True)
-        note = services.add_report_note(report, request.user, data.validated_data["Content"])
+        v = data.validated_data
+        note = services.add_report_note(report, request.user, v["Content"], v.get("Severity"), v.get("AttachmentIDs"))
         return Response(HealthReportNoteSerializer(note).data, status=status.HTTP_201_CREATED)
 
 
 class HealthReportTakeView(APIView):
-    """POST /api/health-reports/<id>/take - Vet trực nhận ca (Reported -> Reviewing)."""
+    """POST /api/health-reports/<id>/take - bác sĩ thú y trực nhận ca (Reported -> Reviewing)."""
 
     permission_classes = [HasAnyPermission(VET)]
 
@@ -592,4 +606,3 @@ class HealthReportResolveView(APIView):
                 raise ValidationError({"MedicalRecordID": ["Không tìm thấy phiếu khám."]})
         services.resolve_report(report, request.user, v.get("VetNote"), record)
         return Response(HealthReportSerializer(get_report(request.user, report.pk)).data)
-

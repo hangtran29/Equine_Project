@@ -32,7 +32,7 @@ class BusinessRuleError(APIException):
 # và trả về cùng mã lỗi (code), nên frontend chỉ cần xử lý một kiểu.
 TRIGGER_MESSAGES = {
     "51001": "Không thể kích hoạt giáo án vì ngựa đang bị khóa tập (Full).",
-    "51002": "Không thể xếp buổi tập vì ngựa đang bị khóa tập (Full).",
+    "51002": "Không thể xếp buổi tập vì ngựa đang khóa tập toàn bộ.",
     "51003": "Buổi tập vượt quá cường độ cho phép khi ngựa đang bị hạn chế tập (Restricted).",
     "51004": "Bệnh án đã chốt không được sửa hoặc xóa. Hãy thêm phiếu đính chính.",
 }
@@ -45,15 +45,17 @@ TRIGGER_CODES = {
 
 # Lỗi do ràng buộc UNIQUE / index trong horse_v2.sql
 CONSTRAINT_MESSAGES = {
-    "UQ_User_Email": "Email đã được sử dụng.",
-    "UX_Horse_MicrochipNumber": "Số microchip đã tồn tại ở một ngựa khác.",
+    "UQ_User_Email": "Email này đã được sử dụng trong hệ thống.",
+    "UX_User_Phone": "Số điện thoại này đã được sử dụng trong hệ thống.",
+    "UX_Horse_MicrochipNumber": "Mã này đã được sử dụng trong hệ thống.",
+    "UX_Horse_PassportNumber": "Mã này đã được sử dụng trong hệ thống.",
     "UX_Horse_Club_HorseCode": "Mã ngựa đã tồn tại trong câu lạc bộ.",
     "UX_MedicalRecord_OneInitialExamPerRequest": "Hồ sơ tiếp nhận này đã có phiếu khám đầu vào.",
     "UX_StallAssignment_OneActivePerStall": "Chuồng này đang có ngựa khác.",
     "UX_StallAssignment_OneActivePerHorse": "Ngựa này đang ở một chuồng khác.",
-    "UX_TrainerHorseAssignment_OneActivePerHorse": "Ngựa này đã có trainer phụ trách.",
-    "UX_TrainingLock_OneActivePerHorse": "Ngựa này đã có một Training Lock đang hiệu lực.",
-    "UQ_TrainingSession_RiderSlot": "Work Rider đã có buổi tập khác ở cùng ngày và cùng thứ tự (SequenceNo).",
+    "UX_TrainerHorseAssignment_OneActivePerHorse": "Ngựa này đã có huấn luyện viên phụ trách.",
+    "UX_TrainingLock_OneActivePerHorse": "Ngựa này đã có một Khóa tập đang hiệu lực.",
+    "UQ_TrainingSession_RiderSlot": "kỵ sĩ tập luyện đã có buổi tập khác ở cùng ngày và cùng thứ tự (SequenceNo).",
     "UQ_TrainingPlanStage_Order": "Thứ tự giai đoạn (StageOrder) bị trùng trong giáo án.",
     "UQ_TrainingResult_Session": "Buổi tập này đã có kết quả.",
     "UQ_InventoryRequestItem": "Một vật tư chỉ được ghi một lần trong yêu cầu.",
@@ -64,7 +66,7 @@ CONSTRAINT_MESSAGES = {
 # Ràng buộc CHECK trong horse_v2.sql -> câu báo lỗi cụ thể (backend thường đã chặn trước bằng Python,
 # đây là lớp cuối cùng khi dữ liệu sai lọt xuống database).
 CHECK_MESSAGES = {
-    "CK_Club_Status": "Trạng thái CLB chỉ được là Active hoặc Inactive.",
+    "CK_Club_Status": "Trạng thái câu lạc bộ chỉ được là Active hoặc Inactive.",
     "CK_User_Status": "Trạng thái tài khoản chỉ được là Active, Inactive hoặc Suspended.",
     "CK_Horse_Gender": "Giới tính ngựa phải là Male (đực), Female (cái) hoặc Gelding (đực đã thiến).",
     "CK_Horse_RegistrationStatus": "Trạng thái hồ sơ ngựa không hợp lệ.",
@@ -80,7 +82,7 @@ CHECK_MESSAGES = {
     "CK_StallAssignment_Dates": "Ngày rời chuồng phải sau hoặc bằng ngày vào chuồng.",
     "CK_StallAssignment_Status": "Trạng thái xếp chuồng không hợp lệ.",
     "CK_Specialization_Status": "Trạng thái chuyên môn chỉ được là Active hoặc Inactive.",
-    "CK_TrainerProfile_Rating": "Điểm đánh giá trainer (TrainerRating) phải từ 0 đến 5.",
+    "CK_TrainerProfile_Rating": "Điểm đánh giá huấn luyện viên (TrainerRating) phải từ 0 đến 5.",
     "CK_TrainerCredential_Type": "Loại giấy tờ phải là Degree, Certificate, License hoặc Award.",
     "CK_TrainerCredential_Dates": "Ngày hết hạn của giấy tờ phải sau hoặc bằng ngày cấp.",
     "CK_TrainerRaceResult_Class": "Hạng giải phải là Group 1, Group 2, Group 3, Listed, Handicap, Maiden hoặc Other.",
@@ -89,9 +91,9 @@ CHECK_MESSAGES = {
     "CK_HorseAssessment_FitnessLevel": "Mức thể lực phải là Excellent, Good, Average hoặc Needs Monitoring.",
     "CK_HorseAssessment_DecisionStatus": "Kết luận đánh giá ngựa không hợp lệ.",
     "CK_TrainerHorseAssignment_Dates": "Ngày kết thúc phân công phải sau hoặc bằng ngày bắt đầu.",
-    "CK_TrainerHorseAssignment_Status": "Trạng thái phân công trainer không hợp lệ.",
-    "CK_HorseWorkRiderPreference_Dates": "Ngày kết thúc phải sau hoặc bằng ngày bắt đầu (Work Rider ưu tiên).",
-    "CK_HorseWorkRiderPreference_Priority": "Thứ tự ưu tiên Work Rider phải lớn hơn 0.",
+    "CK_TrainerHorseAssignment_Status": "Trạng thái phân công huấn luyện viên không hợp lệ.",
+    "CK_HorseWorkRiderPreference_Dates": "Ngày kết thúc phải sau hoặc bằng ngày bắt đầu (kỵ sĩ tập luyện ưu tiên).",
+    "CK_HorseWorkRiderPreference_Priority": "Thứ tự ưu tiên kỵ sĩ tập luyện phải lớn hơn 0.",
     "CK_TrainingPlan_Dates": "Ngày kết thúc giáo án phải sau hoặc bằng ngày bắt đầu.",
     "CK_TrainingPlan_Intensity": "Cường độ giáo án phải là Low, Moderate, High hoặc Very High.",
     "CK_TrainingPlan_Status": "Trạng thái giáo án không hợp lệ.",
@@ -108,10 +110,10 @@ CHECK_MESSAGES = {
     "CK_TrainingResult_HeartRate": "Nhịp tim trung bình / tối đa phải lớn hơn 0.",
     "CK_TrainingResult_Distance": "Quãng đường thực tế không được âm.",
     "CK_TrainingReview_Evaluation": "Đánh giá buổi tập phải là Excellent, Good, Average hoặc Needs Improvement.",
-    "CK_TrainingLock_Level": "Training Lock: mức khóa là Full hoặc Restricted; chỉ Restricted mới có MaxIntensity "
+    "CK_TrainingLock_Level": "Khóa tập: mức khóa là Full hoặc Restricted; chỉ Restricted mới có MaxIntensity "
                              "và MaxIntensity không được âm.",
-    "CK_TrainingLock_Dates": "Ngày kết thúc Training Lock phải sau hoặc bằng ngày bắt đầu.",
-    "CK_TrainingLock_Status": "Gỡ Training Lock cần ghi ngày kết thúc và Vet gỡ khóa.",
+    "CK_TrainingLock_Dates": "Ngày kết thúc Khóa tập phải sau hoặc bằng ngày bắt đầu.",
+    "CK_TrainingLock_Status": "Gỡ Khóa tập cần ghi ngày kết thúc và bác sĩ thú y gỡ khóa.",
     "CK_MedicalRecord_ExamType": "Loại khám phải là Initial Exam, Routine Exam, Injury Exam, Follow-up hoặc Emergency.",
     "CK_MedicalRecord_HealthStatus": "Tình trạng sức khỏe phải là Healthy, Monitor, Injured, Recovering hoặc Isolated.",
     "CK_MedicalRecord_TrainingEligibility": "Kết luận tập luyện phải là Eligible, Restricted hoặc Not Eligible.",
@@ -126,7 +128,7 @@ CHECK_MESSAGES = {
     "CK_MedicalSchedule_Type": "Loại lịch y tế phải là Vaccination, Deworming, Farrier hoặc Routine Examination.",
     "CK_MedicalSchedule_Status": "Trạng thái lịch y tế không hợp lệ.",
     "CK_HealthReport_Severity": "Mức độ báo cáo sức khỏe phải là Urgent hoặc Normal.",
-    "CK_HealthReport_Status": "Báo cáo sức khỏe: đang xử lý / đã xử lý phải có Vet; đã xử lý phải có thời điểm xử lý.",
+    "CK_HealthReport_Status": "Báo cáo sức khỏe: đang xử lý / đã xử lý phải có bác sĩ thú y; đã xử lý phải có thời điểm xử lý.",
     "CK_DietPlan_Dates": "Ngày kết thúc khẩu phần phải sau hoặc bằng ngày bắt đầu.",
     "CK_DietPlan_Status": "Trạng thái khẩu phần không hợp lệ.",
     "CK_DietMeal_Quantity": "Lượng thức ăn mỗi bữa phải lớn hơn 0.",

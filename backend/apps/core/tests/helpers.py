@@ -49,11 +49,11 @@ class Flow1TestCase(APITestCase):
     def horse_payload(self, **extra):
         payload = {
             "HorseName": "Thunder", "Breed": "Thoroughbred", "DateOfBirth": "2021-03-10",
-            "CoatColor": "Bay", "Gender": "Male", "SireName": "Storm King", "DamName": "Lady Rain",
-            "MicrochipNumber": "985000000000001", "PassportNumber": "VN-001",
+            "CoatColor": "Nâu đỏ", "Gender": "Male", "SireName": "Storm King", "DamName": "Lady Rain",
+            "MicrochipNumber": "985000000000001", "PassportNumber": "704001000000001",
         }
         if extra.get("MicrochipNumber") and "PassportNumber" not in extra:
-            extra["PassportNumber"] = f"VN-{extra['MicrochipNumber'][-6:]}"  # hộ chiếu không được trùng
+            extra["PassportNumber"] = f"704001{extra['MicrochipNumber'][-9:]}"  # UELN không được trùng
         payload.update(extra)
         return payload
 

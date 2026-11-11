@@ -77,7 +77,7 @@ class MedicalRecordTests(Flow1TestCase):
                                              {"ExamType": "Initial Exam"}, format="json")
         record_id = res.data["MedicalRecordID"]
         trainer = self.client_for(self.trainer)
-        self.assertEqual(trainer.get(f"/api/horses/{horse_id}/medical-records").data, [])
+        self.assertEqual(trainer.get(f"/api/horses/{horse_id}/medical-records").status_code, 404)
         self.assertEqual(trainer.get(f"/api/medical-records/{record_id}").status_code, 404)
         self.assertEqual(trainer.post(f"/api/horses/{horse_id}/medical-records", {"ExamType": "Initial Exam"},
                                       format="json").status_code, 403)
@@ -141,15 +141,15 @@ class ProfileChangeTests(Flow1TestCase):
     def test_request_and_approve(self):
         horse_id = self.approved_horse()
         owner, manager = self.client_for(self.owner), self.client_for(self.manager)
-        res = owner.patch(f"/api/horses/{horse_id}", {"CoatColor": "Grey"}, format="json")
+        res = owner.patch(f"/api/horses/{horse_id}", {"CoatColor": "Xám"}, format="json")
         self.assertEqual(res.status_code, 409)               # đã Approved thì phải gửi yêu cầu
 
         res = owner.post(f"/api/horses/{horse_id}/profile-change-requests",
-                         {"Changes": {"CoatColor": "Grey"}, "Reason": "Lông đổi màu theo tuổi"}, format="json")
+                         {"Changes": {"CoatColor": "Xám"}, "Reason": "Lông đổi màu theo tuổi"}, format="json")
         self.assertEqual(res.status_code, 201, res.data)
         change_id = res.data["ProfileChangeRequestID"]
         self.assertEqual(res.data["ChangedFields"]["Changes"][0],
-                         {"Field": "CoatColor", "OldValue": "Bay", "NewValue": "Grey"})
+                         {"Field": "CoatColor", "OldValue": "Nâu đỏ", "NewValue": "Xám"})
 
         res = owner.post(f"/api/horses/{horse_id}/profile-change-requests",
                          {"Changes": {"Breed": "X"}, "Reason": "y"}, format="json")
@@ -162,7 +162,7 @@ class ProfileChangeTests(Flow1TestCase):
         res = manager.post(f"/api/profile-change-requests/{change_id}/approve", {}, format="json")
         self.assertEqual(res.status_code, 200, res.data)
         self.assertEqual(res.data["Status"], "Approved")
-        self.assertEqual(owner.get(f"/api/horses/{horse_id}").data["CoatColor"], "Grey")
+        self.assertEqual(owner.get(f"/api/horses/{horse_id}").data["CoatColor"], "Xám")
 
     def test_forbidden_fields_and_reject(self):
         horse_id = self.approved_horse()

@@ -88,7 +88,11 @@ async function login(email) {
   await fill('.auth-login input[name=email]', email); await fill('.auth-login input[name=password]', 'test-only-password')
   await click('.auth-login button[type=submit]'); await waitSelector('.app-shell')
 }
-async function navigate(path) { await cdp('Page.navigate', { url: base + path }); await waitSelector('.injury-region-editor'); await ready() }
+async function navigate(path) {
+  await cdp('Page.navigate', { url: base + path }); await waitSelector('.injury-region-editor'); await ready()
+  assert.equal(await evaluate("document.querySelectorAll('.injury-diagram-viewer').length"), 1, 'Vet uses one injury diagram')
+  assert.equal(await evaluate("!!document.querySelector('.injury-region-editor .injury-diagram-viewer')"), true, 'The region picker with the dark green background is retained')
+}
 
 try {
   const port = await until(async () => { try { return (await readFile(join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0] } catch { return '' } }, 'browser startup')
@@ -334,6 +338,19 @@ try {
 
   // The clinical examination form uses the same picker and real draft API.
   await navigate(`/vet/horses/${horseId}/examination?new=1`)
+  await until(() => evaluate("document.querySelector('.vet-profile-heading .horse-avatar img')?.naturalWidth > 0"), 'clinical horse photo loaded')
+  for (const width of [1440, 834, 390]) {
+    await cdp('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor: 1, mobile: width === 390 })
+    await delay(150)
+    const dimensions = await evaluate("(() => { const avatar = document.querySelector('.vet-profile-heading .horse-avatar').getBoundingClientRect(); const image = document.querySelector('.vet-profile-heading .horse-avatar img').getBoundingClientRect(); return { avatarWidth: avatar.width, avatarHeight: avatar.height, imageWidth: image.width, imageHeight: image.height, headerHeight: document.querySelector('.vet-profile-heading').getBoundingClientRect().height, overflow: document.documentElement.scrollWidth > innerWidth + 1 } })()")
+    assert.ok(dimensions.avatarWidth > 0 && dimensions.avatarWidth <= 90, `${width}px compact horse avatar`)
+    assert.ok(dimensions.imageWidth <= dimensions.avatarWidth && dimensions.imageHeight <= dimensions.avatarHeight, `${width}px photo stays inside its frame`)
+    assert.ok(dimensions.headerHeight < 360, `${width}px exam heading does not fill the page`)
+    assert.equal(dimensions.overflow, false, `${width}px examination has no horizontal overflow`)
+    await evaluate('window.scrollTo(0, 0)')
+    await screenshot(`clinical-header-${width}.png`)
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false })
   await select('#clinical-examType','Injury Exam')
   await diagramPoint(...bodyRegions.find(item=>item.id==='hindquarters').anchor)
   await side(true)
@@ -345,7 +362,7 @@ try {
   await until(async () => {const rows=await api(`/horses/${horseId}/medical-records`,auth.access);return rows.some(row=>row.InjuryLocation===clinicalValue)},'clinical draft persisted')
   assert.equal(await evaluate(`JSON.stringify(Object.fromEntries(Object.entries(localStorage).filter(([k])=>!k.includes('token'))))`),initialLocal,'no medical draft or region data written to localStorage')
   assert.deepEqual(exceptions,[],'no uncaught browser exceptions')
-  console.log('PASS: actual Chromium; both views retain the photo with matching mirrored paths/mask, all 9 regions and visible highlight pixels on each side, keyboard, multi-select, form/list/SVG sync, correct independent body sides, background rejection, both views at 1440/1024/834/390px, touch/scroll/zoom, 500-char limit, real text API persistence/reload, one-field PATCH, failure retention, lost-response reconciliation, both diagrams read-only for other-vet and Signed records, Signed during edit prevents writes and retains input, clinical-form save from both diagrams, no medical localStorage.')
+  console.log('PASS: actual Chromium; one dark green injury diagram per Vet screen, compact clinical horse photo at 1440/834/390px; left/right views retain the photo with matching mirrored paths/mask, all 9 regions and visible highlight pixels on each side, keyboard, multi-select, form/list/SVG sync, correct independent body sides, background rejection, both views at 1440/1024/834/390px, touch/scroll/zoom, 500-char limit, real text API persistence/reload, one-field PATCH, failure retention, lost-response reconciliation, both views read-only for other-vet and Signed records, Signed during edit prevents writes and retains input, clinical-form save from both views, no medical localStorage.')
   console.log(`Screenshots: ${artifacts}`)
 } finally {
   try { await cdp('Browser.close') } catch { browser.kill() }

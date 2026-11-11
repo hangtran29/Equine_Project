@@ -7,14 +7,14 @@ from django.test import TestCase
 
 from apps.care.models import CareTask
 
-from apps.training.tests.base import TODAY, TrainingTestCase
+from apps.training.tests.base import TODAY, TrainingTestCase, result_body
 
 from .test_care import MEALS
 
 
 def another_horse(case, number):
     """Ngựa Approved thứ hai, thứ ba... (microchip, hộ chiếu, mã ngựa không trùng)."""
-    horse_id = case.owner_creates_horse(MicrochipNumber=f"98514100099990{number}", PassportNumber=f"VN-T-{number}")
+    horse_id = case.owner_creates_horse(MicrochipNumber=f"98514100099990{number}", PassportNumber=f"704002{str(number).zfill(9)}")
     case.submit_and_verify(horse_id)
     case.vet_signs_initial_exam(horse_id)
     res = case.client_for(case.manager).post(f"/api/horses/{horse_id}/approve", {"HorseCode": f"EQ-90{number}"},
@@ -41,7 +41,7 @@ class DietByTrainingPlanTests(TrainingTestCase):
         diet = head.post(f"/api/horses/{horse_id}/diet-plans", {"StartDate": TODAY.isoformat(), "Meals": MEALS},
                          format="json").data
         self.assertEqual(diet["TrainingPlanID"], plan["TrainingPlanID"])         # tự gắn giáo án đang chạy
-        vet.post(f"/api/diet-plans/{diet['DietPlanID']}/approve", {}, format="json")
+        head.post(f"/api/diet-plans/{diet['DietPlanID']}/approve", {}, format="json")
         ctx = head.get(f"/api/horses/{horse_id}/diet-context").data
         self.assertEqual(ctx["CurrentDiet"]["TrainingPlanID"], plan["TrainingPlanID"])
         self.assertNotIn("DIET_REVIEW_NEEDED", {n["Type"] for n in head.get("/api/notifications").data})
@@ -50,20 +50,20 @@ class DietByTrainingPlanTests(TrainingTestCase):
 class CareAutomationTests(TrainingTestCase):
     def mine(self, groom=None, day=None):
         return self.client_for(groom or self.groom).get(
-            f"/api/care-tasks?mine=1&Date={(day or TODAY).isoformat()}").data
+            f"/api/care-tasks?mine=1&Status=Pending&Date={(day or TODAY).isoformat()}").data
 
     def test_tasks_generated_by_rules(self):
         horse_id, plan, stage_id = self.ready_horse()
         head, vet = self.client_for(self.head), self.client_for(self.vet)
         diet = head.post(f"/api/horses/{horse_id}/diet-plans", {"StartDate": TODAY.isoformat(), "Meals": MEALS},
                          format="json").data
-        vet.post(f"/api/diet-plans/{diet['DietPlanID']}/approve", {}, format="json")
+        head.post(f"/api/diet-plans/{diet['DietPlanID']}/approve", {}, format="json")
 
         # Buổi tập hôm nay xong -> việc tắm, kiểm tra chân
         sid = self.session(stage_id)["TrainingSessionID"]
         rider = self.client_for(self.rider)
         rider.post(f"/api/training-sessions/{sid}/start")
-        rider.post(f"/api/training-sessions/{sid}/result", {"PerformanceScore": 75}, format="json")
+        rider.post(f"/api/training-sessions/{sid}/result", result_body(PerformanceScore=75), format="json")
 
         tasks = self.mine()
         rules = sorted(t["RuleCode"] for t in tasks)
@@ -76,7 +76,7 @@ class CareAutomationTests(TrainingTestCase):
         # Vet khóa tập -> thêm việc ngâm chân mỗi ngày
         self.client_for(self.vet).post(f"/api/horses/{horse_id}/training-locks",
                                        {"Reason": "Viêm gân", "LockLevel": "Full"}, format="json")
-        self.assertIn("ICE_SOAK_WHEN_LOCKED", {t["RuleCode"] for t in self.mine()})
+        self.assertNotIn("ICE_SOAK_WHEN_LOCKED", {t["RuleCode"] for t in self.mine()})
 
         # Head Trainer sinh trước việc ngày mai, rồi tắt chỉ tiêu dọn chuồng -> việc ngày mai bị gỡ
         tomorrow = TODAY + timedelta(days=1)
@@ -92,25 +92,25 @@ class CareAutomationTests(TrainingTestCase):
         self.assertEqual(head.post("/api/care-tasks/generate", {"Date": (TODAY - timedelta(days=1)).isoformat()},
                                    format="json").data[0]["Created"], 0)        # không sinh việc ngày đã qua
 
-    def test_groom_in_charge_and_load_balancing(self):
+    def test_groom_assignment_and_unassigned_tasks(self):
         groom2 = self.make_user("groom2@one.test", "GROOM", self.club)
         first, second = self.approved_horse(), another_horse(self, 3)
         head = self.client_for(self.head)
         tomorrow = TODAY + timedelta(days=1)
         head.post("/api/care-tasks/generate", {"Date": tomorrow.isoformat()}, format="json")
         owners = {t["HorseID"]: t["GroomID"] for t in head.get(f"/api/care-tasks?Date={tomorrow.isoformat()}").data}
-        self.assertEqual(set(owners.values()), {self.groom.id, groom2.id})    # chia đều 2 Groom
+        self.assertEqual(set(owners.values()), {self.groom.id, None})    # chia đều 2 Groom
 
-        res = head.put(f"/api/horses/{first}/groom", {"GroomID": groom2.id}, format="json")
+        res = self.client_for(self.manager).put(f"/api/horses/{first}/groom", {"GroomID": groom2.id}, format="json")
         self.assertEqual(res.data["GroomName"], groom2.full_name)
         tasks = head.get(f"/api/care-tasks?Date={tomorrow.isoformat()}&HorseID={first}").data
         self.assertTrue(all(t["GroomID"] == groom2.id for t in tasks))          # việc chưa làm chuyển theo
-        self.assertEqual(head.put(f"/api/horses/{second}/groom", {"GroomID": self.rider.id}, format="json")
+        self.assertEqual(self.client_for(self.manager).put(f"/api/horses/{second}/groom", {"GroomID": self.rider.id}, format="json")
                          .status_code, 400)
         self.assertEqual(self.client_for(self.groom).put(f"/api/horses/{second}/groom", {"GroomID": self.groom.id},
                                                          format="json").status_code, 403)
-        self.assertEqual(self.client_for(self.groom).get(f"/api/horses/{first}/groom").data["GroomID"], groom2.id)
-        self.assertEqual(head.delete(f"/api/horses/{first}/groom").status_code, 204)
+        self.assertEqual(self.client_for(self.groom).get(f"/api/horses/{first}/groom").status_code, 404)
+        self.assertEqual(self.client_for(self.manager).delete(f"/api/horses/{first}/groom").status_code, 204)
 
     def test_command_generates_for_all_clubs(self):
         self.approved_horse()

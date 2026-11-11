@@ -36,4 +36,6 @@ MEDIA_ROOT = Path(tempfile.mkdtemp(prefix="equi-test-media-"))  # noqa: F405
 # email trong test giữ trong bộ nhớ (django.core.mail.outbox), gửi ngay không chạy luồng nền
 EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
 EMAIL_ASYNC = False
+NOTIFICATION_EMAILS = True   # kiểm thử email nghiệp vụ trong bộ nhớ
 GOOGLE_CLIENT_ID = "test-client-id.apps.googleusercontent.com"
+CONTENT_TRANSLATION = False   # test không gọi dịch máy qua Internet

@@ -14,6 +14,7 @@ export interface User {
   role: UserRole;
   permissions: string[];
   isActive: boolean;
+  mustChangePassword?: boolean;
 }
 
 export interface Intake {
@@ -43,6 +44,9 @@ export interface Examination {
   vetId?: string;
   weightKg?: number;
   heightCm?: number;
+  bodyTemperatureC?: number;
+  heartRateBpm?: number;
+  respiratoryRate?: number;
   symptoms?: string;
   diagnosis?: string;
   treatment?: string;
@@ -74,6 +78,9 @@ export interface HealthAssessment {
   updatedAt?: string;
   weightKg?: number;
   heightCm?: number;
+  bodyTemperatureC?: number;
+  heartRateBpm?: number;
+  respiratoryRate?: number;
   observations?: string;
   diagnosis?: string;
   treatment?: string;
@@ -162,6 +169,10 @@ export interface Horse {
   initialExamSigned?: boolean;
   ownerName?: string;
   archivedAt?: string;
+  leftDate?: string;
+  declaredHealth?: string;
+  medicalHistory?: string;
+  ownerNote?: string;
   currentStall?: { StallID: number; StallNumber: string; StartDate: string };
   ownershipHistory?: OwnershipRecord[];
   examinations?: Examination[];

@@ -223,11 +223,11 @@ class LanguageTests(Flow1TestCase):
         res = owner.post("/api/horses?lang=en", self.horse_payload(ClubID=self.club.id, MicrochipNumber="123",
                                                                  DateOfBirth="2999-01-01"), format="json")
         self.assertEqual(res.status_code, 400, res.data)
-        self.assertTrue(res.data["MicrochipNumber"][0].startswith("Microchip number must be exactly 15 digits"))
+        self.assertEqual(res.data["MicrochipNumber"][0], "The code is shorter than required.")
         self.assertEqual(res.data["DateOfBirth"][0], "Date of birth cannot be in the future.")
         # câu mặc định của DRF cũng sang tiếng Anh
         res = APIClient().post("/api/auth/register", {}, format="json", HTTP_X_LANGUAGE="en")
-        self.assertIn("This field is required.", str(res.data))
+        self.assertIn("Please fill in this field.", str(res.data))
         # câu có phần thay đổi + code giữ nguyên
         horse_id = self.owner_creates_horse()
         res = self.client_for(self.manager).post(f"/api/horses/{horse_id}/verify", HTTP_X_LANGUAGE="en")
