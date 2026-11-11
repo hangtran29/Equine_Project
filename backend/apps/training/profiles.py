@@ -55,7 +55,7 @@ def percent(part, total):
 
 
 def race_stats(results, today=None):
-    """results: danh sách (race_date, finish_position). Trả về các chỉ số đua của trainer."""
+    """results: danh sách (race_date, finish_position). Trả về các chỉ số đua của huấn luyện viên."""
     today = today or date.today()
     since = today - timedelta(days=RECENT_DAYS)
     recent = [pos for day, pos in results if day >= since]
@@ -89,7 +89,7 @@ def credential_stats(credentials, today=None):
 
 
 def profile_body(trainer, profile, active_horse_count, credentials=(), results=()):
-    """Các trường hồ sơ trainer trả về cho frontend (cùng tên ở mọi API)."""
+    """Các trường hồ sơ huấn luyện viên trả về cho frontend (cùng tên ở mọi API)."""
     start = profile.career_start_date if profile else None
     years = full_years(start)
     level = experience_level(years)
@@ -119,7 +119,7 @@ def required_level(assessment):
 
 
 def suggestion(body, specialization_ids, assessment):
-    """Thêm IsSuggested / RequiredLevel / SuggestionReason cho một trainer theo phiếu đánh giá ngựa."""
+    """Thêm IsSuggested / RequiredLevel / SuggestionReason cho một huấn luyện viên theo phiếu đánh giá ngựa."""
     need = required_level(assessment)
     spec_ok = assessment is None or assessment.specialization_id in specialization_ids
     level_ok = need is None or level_rank(body["ExperienceLevel"]) >= level_rank(need)
@@ -127,11 +127,12 @@ def suggestion(body, specialization_ids, assessment):
     if assessment is not None:
         reasons.append("Đúng chuyên môn được đề xuất" if spec_ok else "Không có chuyên môn được đề xuất")
     if need is None:
-        reasons.append("Ngựa phù hợp mọi cấp trainer")
+        reasons.append("Ngựa phù hợp mọi cấp huấn luyện viên")
     elif level_ok:
         reasons.append(f"Đủ cấp độ cho ngựa này (cần {need} trở lên)")
     else:
-        reasons.append(f"Ngựa này nên giao trainer {need} trở lên, trainer đang là {body['ExperienceLevel']}")
+        reasons.append(f"Ngựa này nên giao cho huấn luyện viên cấp độ {LEVEL_NAMES_VI[need]} trở lên, "
+                       f"huấn luyện viên đang ở cấp độ {LEVEL_NAMES_VI[body['ExperienceLevel']]}")
     return {
         "IsSuggested": spec_ok and level_ok,
         "MatchesSpecialization": spec_ok,

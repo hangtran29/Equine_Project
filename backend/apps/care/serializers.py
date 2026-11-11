@@ -53,7 +53,7 @@ class DietPlanWriteSerializer(DBColumnModelSerializer):
 
 
 class VetDietDecisionSerializer(DietPlanWriteSerializer):
-    """Vet duyệt / trả về / điều chỉnh. Điều chỉnh được gửi kèm Meals, ngày áp dụng."""
+    """bác sĩ thú y duyệt / trả về / điều chỉnh. Điều chỉnh được gửi kèm Meals, ngày áp dụng."""
 
     VetNote = serializers.CharField(max_length=1500, required=False, allow_blank=True, allow_null=True)
 
@@ -68,16 +68,27 @@ class VetDietDecisionSerializer(DietPlanWriteSerializer):
 # ---------------------------------------------------------------------------
 class CareTaskSerializer(DBColumnModelSerializer):
     HorseName = serializers.CharField(source="horse.horse_name", read_only=True)
-    GroomName = serializers.CharField(source="groom.full_name", read_only=True)
+    GroomName = serializers.CharField(source="groom.full_name", read_only=True, default=None)
     AssignedByName = serializers.CharField(source="assigned_by.full_name", read_only=True, default=None)
+    StallNumber = serializers.SerializerMethodField()
+    Source = serializers.SerializerMethodField()
 
     class Meta:
         model = CareTask
         fields = ["id", "horse", "HorseName", "groom", "GroomName", "assigned_by", "AssignedByName", "task_type",
-                  "scheduled_at", "status", "completed_at", "note", "rule_code", "IsAuto"]
+                  "scheduled_at", "status", "completed_at", "note", "rule_code", "IsAuto", "priority",
+                  "feeding_outcome", "outcome_note", "completed_by", "StallNumber", "Source"]
         read_only_fields = fields
 
     IsAuto = serializers.BooleanField(source="is_auto", read_only=True)
+
+    def get_StallNumber(self, obj):
+        return obj.horse.stall_assignments.filter(status="Active").values_list("stall__stall_number", flat=True).first()
+
+    def get_Source(self, obj):
+        if obj.medical_record_id:
+            return "Chỉ định Vet"
+        return "Hệ thống" if obj.rule_code else "Giao thêm"
 
 
 class CareTaskWriteSerializer(DBColumnModelSerializer):
@@ -89,7 +100,12 @@ class CareTaskWriteSerializer(DBColumnModelSerializer):
 
     class Meta:
         model = CareTask
-        fields = ["HorseID", "GroomID", "task_type", "scheduled_at", "note"]
+        fields = ["HorseID", "GroomID", "task_type", "scheduled_at", "note", "medical_record", "training_lock", "priority"]
+
+    def validate_priority(self, v):
+        if v not in ("Normal", "Urgent"):
+            raise serializers.ValidationError("Chọn Normal hoặc Urgent.")
+        return v
 
 
 class CareTaskRuleSerializer(DBColumnModelSerializer):
@@ -118,6 +134,7 @@ class HorseGroomSerializer(serializers.Serializer):
 
 class NoteSerializer(serializers.Serializer):
     Note = serializers.CharField(max_length=1000, required=False, allow_blank=True, allow_null=True)
+    FeedingOutcome = serializers.ChoiceField(choices=("All", "Partial", "Refused"), required=False)
 
 
 class ReasonSerializer(serializers.Serializer):
@@ -185,7 +202,7 @@ class InventoryRequestSerializer(DBColumnModelSerializer):
         read_only_fields = fields
 
     def get_RejectNote(self, obj):
-        """Bảng InventoryRequest không có cột ghi chú của Manager; lý do từ chối lấy từ AuditLog."""
+        """Bảng InventoryRequest không có cột ghi chú của Quản lý câu lạc bộ; lý do từ chối lấy từ AuditLog."""
         if obj.status != InventoryRequest.Status.REJECTED:
             return None
         log = AuditLog.objects.filter(entity_name="InventoryRequest", entity_id=obj.pk,
@@ -221,6 +238,7 @@ class ApproveLineSerializer(serializers.Serializer):
 
 class InventoryApproveSerializer(serializers.Serializer):
     Items = ApproveLineSerializer(many=True, required=False)
+    Note = serializers.CharField(max_length=1000)
 
 
 class RejectSerializer(serializers.Serializer):

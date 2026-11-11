@@ -172,14 +172,14 @@ class TrainerSuggestionTests(TrainingTestCase):
         self.assertFalse(junior["IsSuggested"])
         self.assertTrue(junior["MatchesSpecialization"])
         self.assertFalse(junior["MatchesLevel"])
-        self.assertIn("Senior", junior["SuggestionReason"])
+        self.assertIn("Kỳ cựu", junior["SuggestionReason"])
 
         # Head Trainer vẫn giao được cho trainer mới, nhưng có cảnh báo
         res = self.client_for(self.head).post("/api/trainer-assignments", {
             "HorseID": horse_id, "TrainerID": self.trainer2.id, "SpecializationID": self.flat.id}, format="json")
         self.assertEqual(res.status_code, 201, res.data)
         self.assertEqual(res.data["TrainerExperienceLevel"], "Junior")
-        self.assertEqual(res.data["LevelWarning"], "Ngựa này nên giao trainer Senior trở lên, trainer đang là Junior.")
+        self.assertEqual(res.data["LevelWarning"], "Ngựa này nên giao cho huấn luyện viên cấp độ Kỳ cựu trở lên, huấn luyện viên được chọn đang ở cấp độ Mới vào nghề.")
 
     def test_ordinary_horse_fits_every_level(self):
         horse_id = self.approved_horse()

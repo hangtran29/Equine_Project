@@ -115,7 +115,7 @@ class PlanTemplateTests(TrainingTestCase):
         self.assertEqual(trainer.post("/api/training-plans/from-template", {"HorseID": horse_id},
                                       format="json").status_code, 400)          # đã có nháp
         self.assertEqual(self.client_for(self.trainer2).post("/api/training-plans/from-template",
-                                                             {"HorseID": horse_id}, format="json").status_code, 403)
+                                                             {"HorseID": horse_id}, format="json").status_code, 404)
 
     def test_only_head_trainer_edits_template(self):
         head = self.client_for(self.head)

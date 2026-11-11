@@ -8,7 +8,7 @@ from apps.core.exceptions import BusinessRuleError
 def verify_google_credential(credential: str) -> dict:
     """Trả về {"email", "name"} của tài khoản Google; token sai / hết hạn / khác Client ID -> 401."""
     if not settings.GOOGLE_CLIENT_ID:
-        raise BusinessRuleError("Máy chủ chưa bật đăng nhập Google (thiếu GOOGLE_CLIENT_ID trong .env).",
+        raise BusinessRuleError("Máy chủ chưa bật đăng nhập Google (thiếu GOOGLE_CLIENT_ID trong.env).",
                                 "GOOGLE_LOGIN_DISABLED")
     from google.auth.transport import requests as google_requests
     from google.oauth2 import id_token

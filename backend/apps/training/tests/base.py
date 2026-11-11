@@ -6,6 +6,12 @@ from apps.training.models import Specialization, TrainerSpecialization
 from apps.core.tests.helpers import Flow1TestCase
 
 TODAY = date.today()
+RESULT_BODY = {"ActualDurationMinutes": 44, "ActualDistanceKm": 3.4, "AvgSpeedKmh": 28.5, "MaxSpeedKmh": 41,
+               "RecoveryMinutes": 12, "PerformanceScore": 78, "RiderObservation": "Ngựa chạy đều"}
+
+
+def result_body(**extra):
+    return {**RESULT_BODY, **extra}
 
 
 class TrainingTestCase(Flow1TestCase):
@@ -24,6 +30,12 @@ class TrainingTestCase(Flow1TestCase):
         TrainerSpecialization.objects.create(trainer=cls.trainer2, specialization=cls.flat)
 
     # ---------- dựng sẵn ----------
+    def approved_horse(self):
+        horse_id = super().approved_horse()
+        response = self.client_for(self.manager).put(f"/api/horses/{horse_id}/groom", {"GroomID": self.groom.pk}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        return horse_id
+
     def assign(self, horse_id):
         res = self.client_for(self.head).post("/api/trainer-assignments", {
             "HorseID": horse_id, "TrainerID": self.trainer.id, "SpecializationID": self.flat.id}, format="json")

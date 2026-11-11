@@ -9,6 +9,7 @@ Flow 2 (khi có apps/training): giáo án chờ duyệt / bị trả về, buổ
 Flow 3: báo cáo sức khỏe chưa xử lý, tiêm phòng / lịch y tế sắp tới.
 Flow 4: khẩu phần chờ duyệt / bị trả về, việc chăm sóc tới hạn, yêu cầu vật tư, vật tư sắp hết.
 """
+from apps.core.clubtime import today as club_today
 from datetime import date, timedelta
 
 from django.db.models import Exists, OuterRef
@@ -40,7 +41,7 @@ def build_notifications(user):
     from apps.medical.models import MedicalRecord
     from apps.medical.services import signed_initial_exams
 
-    today = date.today()
+    today = club_today()
     club = user.club_id
     items = []
     perms = user.permission_codes
@@ -53,7 +54,7 @@ def build_notifications(user):
         signed = signed_initial_exams().filter(horse=OuterRef("pk"))
         for horse in Horse.objects.filter(club_id=club, registration_status="PendingExam").annotate(
                 done=Exists(signed)).filter(done=True):
-            items.append(_item("HORSE_TO_APPROVE", "Vet đã khám đầu vào, chờ duyệt tiếp nhận", "Horse", horse.id,
+            items.append(_item("HORSE_TO_APPROVE", "bác sĩ thú y đã khám đầu vào, chờ duyệt tiếp nhận", "Horse", horse.id,
                                horse, horse.updated_at))
     if "CLUB_MANAGE" in perms:  # chưa xếp bác sĩ trực hôm nay / ngày mai
         from apps.core.permissions import club_users_with_role
@@ -92,6 +93,9 @@ def build_notifications(user):
             items.append(_item("PROFILE_CHANGE_DONE", f"Yêu cầu sửa lý lịch: {req.status}", "ProfileChangeRequest",
                                req.id, req.horse, req.reviewed_at, message=req.review_note))
 
+    from .support import notification_items as support_items
+    items += support_items(user, _item)
+
     if flows.has_training():  # Flow 2: giáo án, buổi tập
         from apps.training.notifications import training_items
         items += training_items(user, _item)
@@ -102,9 +106,31 @@ def build_notifications(user):
         from apps.care.notifications import care_items
         items += care_items(user, _item)
 
-    # Khẩn trước, mới trước; bỏ trùng (một người có nhiều vai trò)
+    from .workflow import items as workflow_items
+    for notice in workflow_items(user, _item):
+        # A pending case/current lock already supplies the actionable notice.
+        # Keep WorkflowNotice persistence and worker events without duplicating it in the bell.
+        equivalent = {"HEALTH_REPORT_ESCALATED": {"HEALTH_REPORT"},
+                      "TRAINING_LOCK_CHANGED": {"TRAINING_LOCKED", "TRAINING_UNLOCKED",
+                                                "OWNER_TRAINING_LOCKED", "OWNER_TRAINING_UNLOCKED"}}
+        kinds = equivalent.get(notice["Type"], set())
+        if not any(i["Type"] in kinds and i["HorseID"] == notice["HorseID"]
+                   and (notice["Type"] != "HEALTH_REPORT_ESCALATED" or i["EntityID"] == notice["EntityID"])
+                   for i in items):
+            items.append(notice)
+
+    from .activity import activity_items   # thao tác người khác gửi đến bạn (duyệt, giao việc, xếp lịch...)
+    items += activity_items(user, _item)
+
+    # Mới nhất trước (cùng thời điểm thì khẩn trước); bỏ trùng (một người có nhiều vai trò).
+    # Không đẩy mọi thông báo khẩn lên đầu: thông báo khẩn cũ sẽ che mất thông báo mới (chuông chỉ hiện 5 mục đầu).
+    return ordered(items)
+
+
+def ordered(items):
+    """Bỏ trùng (Type, EntityID) rồi xếp mới nhất trước; cùng thời điểm thì khẩn trước."""
     unique = {(i["Type"], i["EntityID"]): i for i in items}
-    return sorted(unique.values(), key=lambda i: (i["Priority"] != "High", -(_ts(i["At"]))))
+    return sorted(unique.values(), key=lambda i: (-(_ts(i["At"])), i["Priority"] != "High"))
 
 
 def _ts(value):
@@ -138,6 +164,8 @@ class NotificationView(APIView):
         items = with_read_state(request.user, build_notifications(request.user))
         if request.query_params.get("unread") in ("1", "true"):
             items = [i for i in items if not i["IsRead"]]
+        if request.query_params.get("urgent") in ("1", "true"):          # BS10b: cảnh báo khẩn hiện trên màn hình
+            items = [i for i in items if i["Priority"] == "High"]
         if is_english():  # header X-Language: en
             for item in items:
                 item["Title"] = translate_text(item["Title"])
@@ -146,11 +174,13 @@ class NotificationView(APIView):
 
 
 class NotificationUnreadCountView(APIView):
-    """GET /api/notifications/unread-count -> {"Unread": 3, "Total": 5} (số trên chuông)."""
+    """GET /api/notifications/unread-count -> {"Unread": 3, "UrgentUnread": 1, "Total": 5} (số và chấm đỏ trên chuông)."""
 
     def get(self, request):
         items = with_read_state(request.user, build_notifications(request.user))
-        return Response({"Unread": sum(1 for i in items if not i["IsRead"]), "Total": len(items)})
+        unread = [i for i in items if not i["IsRead"]]
+        return Response({"Unread": len(unread), "UrgentUnread": sum(1 for i in unread if i["Priority"] == "High"),
+                         "Total": len(items)})
 
 
 class NotificationReadView(APIView):

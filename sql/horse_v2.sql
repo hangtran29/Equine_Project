@@ -72,6 +72,7 @@ DROP VIEW IF EXISTS dbo.vw_VetHealthReportQueue;
 GO
 
 /* Bảng v2 - theo thứ tự con trước, cha sau */
+DROP TABLE IF EXISTS dbo.SupportRequest;
 DROP TABLE IF EXISTS dbo.NotificationRead;
 DROP TABLE IF EXISTS dbo.AuditLog;
 DROP TABLE IF EXISTS dbo.InventoryRequestItem;
@@ -221,6 +222,7 @@ CREATE TABLE dbo.[User]
     Phone VARCHAR(20),
     Address NVARCHAR(255),              -- địa chỉ liên hệ (chủ ngựa: giao nhận ngựa, giấy tờ)
     Status VARCHAR(20) NOT NULL CONSTRAINT DF_User_Status DEFAULT 'Active',
+    MustChangePassword BIT NOT NULL CONSTRAINT DF_User_MustChangePassword DEFAULT 0,  -- mật khẩu tạm do Manager cấp
     CreatedAt DATETIME2 NOT NULL CONSTRAINT DF_User_CreatedAt DEFAULT SYSDATETIME(),
 
     CONSTRAINT UQ_User_Email UNIQUE (Email),
@@ -283,6 +285,12 @@ CREATE TABLE dbo.Horse
     ArchivedAt DATETIME2 NULL,
     ArchivedBy INT NULL,
     ArchiveReason NVARCHAR(500),
+    LeftDate DATE NULL,                 -- ngày ngựa rời CLB (khi lưu trữ)
+
+    /* Owner tự khai về sức khỏe khi đăng ký (không bắt buộc) */
+    DeclaredHealth NVARCHAR(1000),      -- tình trạng sức khỏe hiện tại
+    MedicalHistory NVARCHAR(1000),      -- tiền sử bệnh
+    OwnerNote NVARCHAR(1000),           -- ghi chú khác
 
     CreatedAt DATETIME2 NOT NULL CONSTRAINT DF_Horse_CreatedAt DEFAULT SYSDATETIME(),
     UpdatedAt DATETIME2 NOT NULL CONSTRAINT DF_Horse_UpdatedAt DEFAULT SYSDATETIME(),
@@ -435,8 +443,9 @@ CREATE TABLE dbo.Stall
     StallID INT IDENTITY(1,1) PRIMARY KEY,
     ClubID INT NOT NULL,
     StallNumber VARCHAR(30) NOT NULL,
-    StallType VARCHAR(50),
+    StallType NVARCHAR(50),
     Status VARCHAR(20) NOT NULL CONSTRAINT DF_Stall_Status DEFAULT 'Available',
+    MaintenanceUntil DATE NULL,         -- dự kiến xong bảo trì (khi Status = Maintenance)
 
     CONSTRAINT FK_Stall_Club FOREIGN KEY (ClubID)
         REFERENCES dbo.Club(ClubID),
@@ -719,7 +728,7 @@ CREATE TABLE dbo.TrainingPlanTemplateStage
     Intensity VARCHAR(30),
     TrainingLoad DECIMAL(10,2) NULL,
     DistanceTargetKm DECIMAL(10,2) NULL,
-    Surface VARCHAR(50),
+    Surface NVARCHAR(50),
     Note NVARCHAR(1500),
     ExitCriteria NVARCHAR(1000),
 
@@ -793,7 +802,7 @@ CREATE TABLE dbo.TrainingPlanStage
     Intensity VARCHAR(30),
     TrainingLoad DECIMAL(10,2) NULL,
     DistanceTargetKm DECIMAL(10,2) NULL,
-    Surface VARCHAR(50),
+    Surface NVARCHAR(50),
     Note NVARCHAR(1500),
     -- Trainer chốt giai đoạn: tổng kết gửi chủ ngựa
     ClosedAt DATETIME2 NULL,
@@ -835,12 +844,12 @@ CREATE TABLE dbo.TrainingSession
     EndTime TIME(0) NULL,
     SequenceNo INT NOT NULL,
 
-    TrainingType VARCHAR(60) NOT NULL,
+    TrainingType NVARCHAR(60) NOT NULL,
     DurationPlannedMinutes INT NULL,
     DistancePlannedKm DECIMAL(10,2) NULL,
     TargetSpeedKmh DECIMAL(8,2) NULL,
     TrainingLoad DECIMAL(10,2) NULL,
-    Surface VARCHAR(50),
+    Surface NVARCHAR(50),
     Location NVARCHAR(150),
     Instructions NVARCHAR(2000),
 
@@ -888,11 +897,18 @@ CREATE TABLE dbo.TrainingResult
     RiderObservation NVARCHAR(2000),            -- Work Rider ghi cảm nhận khi cưỡi
     SubstituteObservation NVARCHAR(2000) NULL,  -- Substitute Trainer ghi những gì quan sát được
     VideoUrl VARCHAR(500),
+    EarlyEndReason NVARCHAR(30) NULL,           -- buổi tập ngắn hơn dự kiến: lý do (Fatigue, Weather, ...)
+    EarlyEndNote NVARCHAR(1000) NULL,           -- mô tả lý do kết thúc sớm
     RecordedAt DATETIME2 NOT NULL CONSTRAINT DF_TrainingResult_RecordedAt DEFAULT SYSDATETIME(),
 
     CONSTRAINT FK_TrainingResult_Session FOREIGN KEY (TrainingSessionID)
         REFERENCES dbo.TrainingSession(TrainingSessionID),
     CONSTRAINT UQ_TrainingResult_Session UNIQUE (TrainingSessionID),
+    CONSTRAINT CK_TrainingResult_EarlyEnd CHECK
+    (
+        EarlyEndReason IS NULL
+        OR (EarlyEndReason IN (N'Fatigue', N'Injury', N'Weather', N'Surface', N'Rider', N'Other') AND EarlyEndNote IS NOT NULL)
+    ),
     CONSTRAINT CK_TrainingResult_Performance CHECK
     (
         PerformanceScore IS NULL OR (PerformanceScore >= 0 AND PerformanceScore <= 100)
@@ -983,6 +999,7 @@ GO
    muốn sửa thì thêm MedicalRecordAmendment). */
 CREATE TABLE dbo.MedicalRecord
 (
+    FollowUpLockID INT NULL,
     MedicalRecordID INT IDENTITY(1,1) PRIMARY KEY,
     HorseID INT NOT NULL,
     VetID INT NOT NULL,
@@ -993,6 +1010,9 @@ CREATE TABLE dbo.MedicalRecord
     ExamType VARCHAR(50) NOT NULL,
     WeightKg DECIMAL(6,1) NULL,         -- cân nặng lúc khám
     HeightCm DECIMAL(5,1) NULL,         -- chiều cao (đo đến u vai) lúc khám
+    BodyTemperatureC DECIMAL(4,1) NULL, -- thân nhiệt (°C)
+    HeartRateBpm INT NULL,              -- nhịp tim (lần/phút)
+    RespiratoryRate INT NULL,           -- nhịp thở (lần/phút)
     Symptoms NVARCHAR(1500),            -- triệu chứng / quan sát
     Diagnosis NVARCHAR(1500),
     Conclusion NVARCHAR(1500),          -- kết luận của Vet
@@ -1274,7 +1294,7 @@ CREATE TABLE dbo.DietMeal
     MealTime TIME(0) NOT NULL,
     FeedType NVARCHAR(100) NOT NULL,
     Quantity DECIMAL(10,2) NOT NULL,
-    Unit VARCHAR(30) NOT NULL,
+    Unit NVARCHAR(30) NOT NULL,
     Note NVARCHAR(1000),
 
     CONSTRAINT FK_DietMeal_DietPlan FOREIGN KEY (DietPlanID)
@@ -1285,9 +1305,16 @@ GO
 
 CREATE TABLE dbo.CareTask
 (
+    MedicalRecordID INT NULL,
+    TrainingLockID INT NULL,
+    Priority VARCHAR(10) NOT NULL CONSTRAINT DF_CareTask_Priority DEFAULT 'Normal',
+    FeedingOutcome VARCHAR(10) NULL,
+    OutcomeNote NVARCHAR(1000) NULL,
+    CompletedBy INT NULL,
+    DietMealID INT NULL,
     CareTaskID INT IDENTITY(1,1) PRIMARY KEY,
     HorseID INT NOT NULL,
-    GroomID INT NOT NULL,
+    GroomID INT NULL,
     AssignedBy INT NULL,                -- người giao việc; NULL nếu hệ thống tự sinh theo chỉ tiêu
 
     TaskType VARCHAR(50) NOT NULL,
@@ -1306,7 +1333,7 @@ CREATE TABLE dbo.CareTask
         REFERENCES dbo.[User](UserID),
     CONSTRAINT CK_CareTask_Type CHECK
     (
-        TaskType IN ('Feeding', 'Cleaning', 'Bathing', 'Ice Leg Soak')
+        TaskType IN ('Feeding', 'Cleaning', 'Bathing', 'Ice Leg Soak', 'Medical Care', 'Training Support')
     ),
     CONSTRAINT CK_CareTask_Status CHECK
     (
@@ -1340,7 +1367,7 @@ CREATE TABLE dbo.CareTaskRule
     ),
     CONSTRAINT CK_CareTaskRule_Type CHECK
     (
-        TaskType IN ('Feeding', 'Cleaning', 'Bathing', 'Ice Leg Soak')
+        TaskType IN ('Feeding', 'Cleaning', 'Bathing', 'Ice Leg Soak', 'Medical Care', 'Training Support')
     ),
     CONSTRAINT CK_CareTaskRule_Offset CHECK (OffsetMinutes IS NULL OR OffsetMinutes >= 0)
 );
@@ -1370,7 +1397,7 @@ CREATE TABLE dbo.InventoryItem
     ItemName NVARCHAR(150) NOT NULL,
     ItemType VARCHAR(50) NOT NULL,
     Quantity DECIMAL(12,2) NOT NULL CONSTRAINT DF_InventoryItem_Quantity DEFAULT 0,
-    Unit VARCHAR(30) NOT NULL,
+    Unit NVARCHAR(30) NOT NULL,
     MinimumQuantity DECIMAL(12,2) NOT NULL CONSTRAINT DF_InventoryItem_Minimum DEFAULT 0,
     Status VARCHAR(20) NOT NULL CONSTRAINT DF_InventoryItem_Status DEFAULT 'Available',
 
@@ -1471,9 +1498,40 @@ CREATE TABLE dbo.NotificationRead
 );
 GO
 
+-- Yêu cầu hỗ trợ: người dùng gửi đến Quản lý câu lạc bộ, Quản lý phản hồi và đóng yêu cầu
+CREATE TABLE dbo.SupportRequest
+(
+    SupportRequestID INT IDENTITY(1,1) NOT NULL,
+    ClubID INT NOT NULL,
+    RequesterID INT NOT NULL,
+    Topic NVARCHAR(30) NOT NULL,
+    HorseID INT NULL,
+    Content NVARCHAR(1000) NOT NULL,
+    Status NVARCHAR(20) NOT NULL CONSTRAINT DF_SupportRequest_Status DEFAULT N'Open',
+    Response NVARCHAR(1000) NULL,
+    ResolvedByID INT NULL,
+    CreatedAt DATETIME2 NOT NULL CONSTRAINT DF_SupportRequest_CreatedAt DEFAULT SYSDATETIME(),
+    ResolvedAt DATETIME2 NULL,
+
+    CONSTRAINT PK_SupportRequest PRIMARY KEY (SupportRequestID),
+    CONSTRAINT FK_SupportRequest_Club FOREIGN KEY (ClubID) REFERENCES dbo.Club(ClubID),
+    CONSTRAINT FK_SupportRequest_Requester FOREIGN KEY (RequesterID) REFERENCES dbo.[User](UserID),
+    CONSTRAINT FK_SupportRequest_Horse FOREIGN KEY (HorseID) REFERENCES dbo.Horse(HorseID),
+    CONSTRAINT FK_SupportRequest_ResolvedBy FOREIGN KEY (ResolvedByID) REFERENCES dbo.[User](UserID),
+    CONSTRAINT CK_SupportRequest_Topic CHECK (Topic IN (N'HorseProfile', N'Account', N'Training', N'Health', N'Care', N'Other')),
+    CONSTRAINT CK_SupportRequest_Status CHECK (Status IN (N'Open', N'Resolved')),
+    CONSTRAINT CK_SupportRequest_Resolved CHECK (
+        (Status = N'Open' AND ResolvedAt IS NULL)
+        OR (Status = N'Resolved' AND Response IS NOT NULL AND ResolvedByID IS NOT NULL AND ResolvedAt IS NOT NULL))
+);
+GO
+
 /* ================================================================
    INDEXES
    ================================================================ */
+
+CREATE INDEX IX_SupportRequest_Club_Status
+    ON dbo.SupportRequest(ClubID, Status, CreatedAt);
 
 CREATE INDEX IX_User_ClubID
     ON dbo.[User](ClubID);
@@ -1491,6 +1549,16 @@ CREATE INDEX IX_Horse_OwnerID
 CREATE UNIQUE INDEX UX_Horse_MicrochipNumber
     ON dbo.Horse(MicrochipNumber)
     WHERE MicrochipNumber IS NOT NULL;
+
+-- Số hộ chiếu (UELN) không trùng; ngựa chưa được cấp hộ chiếu để NULL
+CREATE UNIQUE INDEX UX_Horse_PassportNumber
+    ON dbo.Horse(PassportNumber)
+    WHERE PassportNumber IS NOT NULL;
+
+-- Mỗi số điện thoại chỉ thuộc một tài khoản
+CREATE UNIQUE INDEX UX_User_Phone
+    ON dbo.[User](Phone)
+    WHERE Phone IS NOT NULL;
 
 CREATE UNIQUE INDEX UX_Horse_Club_HorseCode
     ON dbo.Horse(ClubID, HorseCode)
@@ -2055,3 +2123,113 @@ GO
 /* ================================================================
    END
    ================================================================ */
+
+-- Flow 3/4 persistent workflow additions (2026-11-02)
+GO
+CREATE TABLE dbo.WorkflowNotice
+(
+    WorkflowNoticeID INT IDENTITY(1,1) PRIMARY KEY,
+    UserID INT NOT NULL,
+    HorseID INT NOT NULL,
+    Kind NVARCHAR(50) NOT NULL,
+    SourceKey NVARCHAR(160) NOT NULL,
+    Message NVARCHAR(1000) NOT NULL,
+    CreatedAt DATETIME2 NOT NULL,
+    CONSTRAINT FK_WorkflowNotice_UserID FOREIGN KEY (UserID) REFERENCES dbo.[User](UserID),
+    CONSTRAINT FK_WorkflowNotice_HorseID FOREIGN KEY (HorseID) REFERENCES dbo.[Horse](HorseID),
+    CONSTRAINT UQ_WorkflowNotice_User_Source UNIQUE (UserID, SourceKey)
+);
+GO
+CREATE TABLE dbo.HealthReportAttachment
+(
+    HealthReportAttachmentID INT IDENTITY(1,1) PRIMARY KEY,
+    HorseID INT NOT NULL,
+    HealthReportID INT NULL,
+    UploadedBy INT NOT NULL,
+    FileUrl NVARCHAR(500) NOT NULL,
+    UploadedAt DATETIME2 NOT NULL,
+    CONSTRAINT FK_HealthReportAttachment_HorseID FOREIGN KEY (HorseID) REFERENCES dbo.[Horse](HorseID),
+    CONSTRAINT FK_HealthReportAttachment_HealthReportID FOREIGN KEY (HealthReportID) REFERENCES dbo.[HealthReport](HealthReportID),
+    CONSTRAINT FK_HealthReportAttachment_UploadedBy FOREIGN KEY (UploadedBy) REFERENCES dbo.[User](UserID)
+);
+GO
+CREATE TABLE dbo.InjuryMarker
+(
+    InjuryMarkerID INT IDENTITY(1,1) PRIMARY KEY,
+    MedicalRecordID INT NOT NULL,
+    BodyRegion NVARCHAR(30) NOT NULL,
+    BodySide NVARCHAR(5) NOT NULL,
+    DiagramView NVARCHAR(5) NOT NULL,
+    XRatio DECIMAL(12,10) NOT NULL,
+    YRatio DECIMAL(12,10) NOT NULL,
+    DiagramVersion NVARCHAR(50) NOT NULL,
+    Description NVARCHAR(1500) NOT NULL,
+    Severity NVARCHAR(20) NOT NULL,
+    Status NVARCHAR(20) NOT NULL,
+    DetectedAt DATE NOT NULL,
+    Notes NVARCHAR(2000) NOT NULL,
+    CONSTRAINT FK_InjuryMarker_MedicalRecordID FOREIGN KEY (MedicalRecordID) REFERENCES dbo.[MedicalRecord](MedicalRecordID),
+    CONSTRAINT CK_InjuryMarker_Ratio CHECK (XRatio BETWEEN 0 AND 1 AND YRatio BETWEEN 0 AND 1),
+    CONSTRAINT CK_InjuryMarker_Side CHECK (BodySide IN ('left','right') AND DiagramView = BodySide)
+);
+GO
+CREATE TABLE dbo.InjuryAssessment
+(
+    InjuryAssessmentID INT IDENTITY(1,1) PRIMARY KEY,
+    InjuryMarkerID INT NOT NULL,
+    MedicalRecordID INT NOT NULL,
+    AssessmentDate DATE NOT NULL,
+    Status NVARCHAR(20) NOT NULL,
+    Comment NVARCHAR(1500) NOT NULL,
+    AuthorID INT NOT NULL,
+    CreatedAt DATETIME2 NOT NULL,
+    CONSTRAINT FK_InjuryAssessment_InjuryMarkerID FOREIGN KEY (InjuryMarkerID) REFERENCES dbo.[InjuryMarker](InjuryMarkerID),
+    CONSTRAINT FK_InjuryAssessment_MedicalRecordID FOREIGN KEY (MedicalRecordID) REFERENCES dbo.[MedicalRecord](MedicalRecordID),
+    CONSTRAINT FK_InjuryAssessment_AuthorID FOREIGN KEY (AuthorID) REFERENCES dbo.[User](UserID)
+);
+GO
+CREATE TABLE dbo.VetCareOrder
+(
+    VetCareOrderID INT IDENTITY(1,1) PRIMARY KEY,
+    MedicalRecordID INT NOT NULL,
+    TrainingLockID INT NULL,
+    CreatedBy INT NOT NULL,
+    TaskType NVARCHAR(50) NOT NULL,
+    Instructions NVARCHAR(1000) NOT NULL,
+    StartDate DATE NOT NULL,
+    EndDate DATE NOT NULL,
+    TimeOfDay TIME NOT NULL,
+    IsActive BIT NOT NULL,
+    CreatedAt DATETIME2 NOT NULL,
+    CONSTRAINT FK_VetCareOrder_MedicalRecordID FOREIGN KEY (MedicalRecordID) REFERENCES dbo.[MedicalRecord](MedicalRecordID),
+    CONSTRAINT FK_VetCareOrder_TrainingLockID FOREIGN KEY (TrainingLockID) REFERENCES dbo.[TrainingLock](TrainingLockID),
+    CONSTRAINT FK_VetCareOrder_CreatedBy FOREIGN KEY (CreatedBy) REFERENCES dbo.[User](UserID),
+    CONSTRAINT CK_VetCareOrder_TaskType CHECK (TaskType IN ('Feeding', 'Cleaning', 'Bathing', 'Ice Leg Soak', 'Medical Care', 'Training Support'))
+);
+GO
+CREATE TABLE dbo.VetDietRestriction
+(
+    VetDietRestrictionID INT IDENTITY(1,1) PRIMARY KEY,
+    HorseID INT NOT NULL,
+    CreatedBy INT NOT NULL,
+    Instructions NVARCHAR(1500) NOT NULL,
+    FeedType NVARCHAR(100) NOT NULL,
+    MaxDailyQuantity DECIMAL(10,2) NULL,
+    Unit NVARCHAR(30) NOT NULL,
+    StartDate DATE NOT NULL,
+    EndDate DATE NULL,
+    CreatedAt DATETIME2 NOT NULL,
+    IsActive BIT NOT NULL,
+    CONSTRAINT FK_VetDietRestriction_HorseID FOREIGN KEY (HorseID) REFERENCES dbo.[Horse](HorseID),
+    CONSTRAINT FK_VetDietRestriction_CreatedBy FOREIGN KEY (CreatedBy) REFERENCES dbo.[User](UserID)
+);
+GO
+ALTER TABLE dbo.MedicalRecord ADD CONSTRAINT FK_MedicalRecord_FollowUpLock FOREIGN KEY (FollowUpLockID) REFERENCES dbo.TrainingLock(TrainingLockID);
+ALTER TABLE dbo.CareTask ADD CONSTRAINT FK_CareTask_MedicalRecord FOREIGN KEY (MedicalRecordID) REFERENCES dbo.MedicalRecord(MedicalRecordID);
+ALTER TABLE dbo.CareTask ADD CONSTRAINT FK_CareTask_TrainingLock FOREIGN KEY (TrainingLockID) REFERENCES dbo.TrainingLock(TrainingLockID);
+ALTER TABLE dbo.CareTask ADD CONSTRAINT FK_CareTask_CompletedBy FOREIGN KEY (CompletedBy) REFERENCES dbo.[User](UserID);
+CREATE UNIQUE INDEX UX_HealthReport_OneOpen ON dbo.HealthReport(HorseID) WHERE Status <> 'Resolved';
+GO
+
+ALTER TABLE dbo.CareTask ADD CONSTRAINT FK_CareTask_DietMeal FOREIGN KEY (DietMealID) REFERENCES dbo.DietMeal(DietMealID);
+GO

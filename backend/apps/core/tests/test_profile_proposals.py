@@ -50,14 +50,14 @@ class ProfileProposalTests(Flow1TestCase):
         return self.manager_api.post(f"/api/profile-change-requests/{response.data['ProfileChangeRequestID']}/approve", {}, format="json")
 
     def test_multiple_fields_normalized_and_unchanged_values_omitted(self):
-        response = self.propose({"HorseName": "  Thunder II  ", "CoatColor": "Grey", "Breed": " Thoroughbred "})
+        response = self.propose({"HorseName": "  Thunder II  ", "CoatColor": "Xám", "Breed": " Thoroughbred "})
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual([i["Field"] for i in response.data["ChangedFields"]["Changes"]], ["HorseName", "CoatColor"])
         self.horse.refresh_from_db()
         self.assertEqual(self.horse.horse_name, "Thunder")
         self.assertEqual(self.approve(response).status_code, 200)
         self.horse.refresh_from_db()
-        self.assertEqual((self.horse.horse_name, self.horse.coat_color), ("Thunder II", "Grey"))
+        self.assertEqual((self.horse.horse_name, self.horse.coat_color), ("Thunder II", "Xám"))
 
     def test_unchanged_empty_and_protected_values_rejected(self):
         for changes, expected in [({"Breed": " Thoroughbred "}, 409), ({}, 409),
@@ -122,14 +122,14 @@ class ProfileProposalTests(Flow1TestCase):
         old_avatar = self.document("old.png", is_primary=True)
         doc = self.document()
         proof = self.document("proof.pdf")
-        response = self.propose({"CoatColor": "Grey"}, [
+        response = self.propose({"CoatColor": "Xám"}, [
             {"Purpose": "avatar", "name": "avatar.png"}, {"Purpose": "image", "name": "gallery.png"},
             {"Purpose": "replace", "ReplacesDocumentID": doc.id}, {"Purpose": "add", "name": "extra.pdf"},
             {"Purpose": "evidence", "name": "proof-new.pdf"},
         ], RemoveImageIDs=[old_avatar.id], EvidenceDocumentIDs=[proof.id])
         self.assertEqual(self.approve(response).status_code, 200)
         self.horse.refresh_from_db(); old_avatar.refresh_from_db()
-        self.assertEqual(self.horse.coat_color, "Grey")
+        self.assertEqual(self.horse.coat_color, "Xám")
         self.assertTrue(old_avatar.is_retired)
         self.assertFalse(HorseDocument.objects.filter(document_name="proof-new.pdf").exists())
         self.assertEqual(HorseDocument.objects.filter(is_retired=False).count(), 5)
@@ -183,7 +183,7 @@ class ProfileProposalTests(Flow1TestCase):
 
     def test_duplicate_returns_existing_request_id(self):
         first = self.propose({"Breed": "Arabian"})
-        duplicate = self.propose({"CoatColor": "Grey"})
+        duplicate = self.propose({"CoatColor": "Xám"})
         self.assertEqual(duplicate.status_code, 409)
         self.assertEqual(int(duplicate.data["RequestID"]), first.data["ProfileChangeRequestID"])
         self.assertEqual(duplicate.data["code"], "PENDING_REQUEST_EXISTS")
@@ -197,12 +197,12 @@ class ProfileProposalTests(Flow1TestCase):
         self.assertFalse(HorseDocument.objects.exists())
         self.horse.refresh_from_db()
         self.assertEqual(self.horse.breed, "Thoroughbred")
-        Horse.objects.filter(pk=self.horse.id).update(coat_color="Bay")
+        Horse.objects.filter(pk=self.horse.id).update(coat_color="Nâu đỏ")
         self.document()
         self.assertEqual(self.approve(response).data["code"], "STALE_PROFILE")
 
     def test_rejection_requires_reason_and_never_applies_files_or_fields(self):
-        response = self.propose({"CoatColor": "Grey"}, [{"Purpose": "avatar", "name": "new.png"}])
+        response = self.propose({"CoatColor": "Xám"}, [{"Purpose": "avatar", "name": "new.png"}])
         change_url = f"/api/profile-change-requests/{response.data['ProfileChangeRequestID']}"
         self.assertEqual(self.manager_api.post(change_url + "/reject", {"ReviewNote": " "}, format="json").status_code, 409)
         result = self.manager_api.post(change_url + "/reject", {"ReviewNote": "Cần thêm giấy tờ"}, format="json")
@@ -210,7 +210,7 @@ class ProfileProposalTests(Flow1TestCase):
         self.assertEqual(result.data["ReviewedBy"], self.manager.id)
         self.assertEqual(result.data["ReviewedByName"], self.manager.full_name)
         self.horse.refresh_from_db()
-        self.assertEqual(self.horse.coat_color, "Bay")
+        self.assertEqual(self.horse.coat_color, "Nâu đỏ")
         self.assertFalse(HorseDocument.objects.exists())
         self.assertEqual(self.approve(response).status_code, 409)
 
@@ -221,7 +221,7 @@ class ProfileProposalTests(Flow1TestCase):
         self.assertEqual(HorseDocument.objects.count(), 1)
 
     def test_owner_can_withdraw_pending_then_create_new_request(self):
-        response = self.propose({"CoatColor": "Grey"}, [{"Purpose": "add"}])
+        response = self.propose({"CoatColor": "Xám"}, [{"Purpose": "add"}])
         change_url = f"/api/profile-change-requests/{response.data['ProfileChangeRequestID']}"
         self.assertEqual(self.client_for(self.other_owner).post(change_url + "/withdraw").status_code, 404)
         result = self.owner_api.post(change_url + "/withdraw")
@@ -232,7 +232,7 @@ class ProfileProposalTests(Flow1TestCase):
         self.assertEqual(self.approve(response).status_code, 409)
         self.assertFalse(HorseDocument.objects.exists())
         self.horse.refresh_from_db()
-        self.assertEqual(self.horse.coat_color, "Bay")
+        self.assertEqual(self.horse.coat_color, "Nâu đỏ")
         self.assertEqual(self.propose({"Breed": "Arabian"}).status_code, 201)
 
     def test_cannot_withdraw_an_approved_request(self):
@@ -273,7 +273,7 @@ class ProfileProposalTests(Flow1TestCase):
         self.assertEqual(set(root.glob("*")), before)
 
     def test_failed_approval_rolls_back_entire_change(self):
-        response = self.propose({"CoatColor": "Grey"}, [{"Purpose": "add"}, {"Purpose": "add", "name": "second.pdf"}])
+        response = self.propose({"CoatColor": "Xám"}, [{"Purpose": "add"}, {"Purpose": "add", "name": "second.pdf"}])
         actual_create = HorseDocument.objects.create
         calls = []
 
@@ -287,13 +287,13 @@ class ProfileProposalTests(Flow1TestCase):
             with self.assertRaises(RuntimeError):
                 self.approve(response)
         self.horse.refresh_from_db()
-        self.assertEqual(self.horse.coat_color, "Bay")
+        self.assertEqual(self.horse.coat_color, "Nâu đỏ")
         self.assertFalse(HorseDocument.objects.exists())
         self.assertEqual(ProfileChangeRequest.objects.get().status, "Pending")
 
     def test_legacy_request_without_snapshot_can_still_be_approved(self):
         request = ProfileChangeRequest.objects.create(horse=self.horse, requested_by=self.owner, changed_fields=json.dumps({
-            "Reason": "Legacy", "Changes": [{"Field": "CoatColor", "OldValue": "Bay", "NewValue": "Grey"}]}))
+            "Reason": "Legacy", "Changes": [{"Field": "CoatColor", "OldValue": "Nâu đỏ", "NewValue": "Xám"}]}))
         self.assertEqual(self.manager_api.post(f"/api/profile-change-requests/{request.id}/approve").status_code, 200)
 
     def test_approved_owner_upload_cannot_bypass_review_but_draft_keeps_flow(self):

@@ -34,7 +34,7 @@ MANAGER_ROLE = "CLUB_MANAGER"
 def club_member(manager, user_id):
     user = User.objects.filter(pk=user_id, club_id=manager.club_id).prefetch_related("roles").first()
     if user is None:
-        raise NotFound("Không tìm thấy người dùng trong CLB của bạn.")
+        raise NotFound("Không tìm thấy người dùng trong câu lạc bộ của bạn.")
     return user
 
 
@@ -54,7 +54,7 @@ def pending_work(user, role_code):
 
         horses = TrainerHorseAssignment.objects.filter(trainer=user, status="Active").count()
         if horses:
-            items.append(f"đang phụ trách {horses} ngựa (chuyển ngựa cho trainer khác trước)")
+            items.append(f"đang phụ trách {horses} ngựa (chuyển ngựa cho huấn luyện viên khác trước)")
         subs = TrainingSession.objects.filter(substitute_trainer=user, status__in=("Assigned", "In Progress")).count()
         if subs:
             items.append(f"đang giám sát thay {subs} buổi tập chưa xong")
@@ -118,7 +118,7 @@ def set_roles(manager, user, role_codes):
     if unknown:
         raise ValidationError({"RoleCodes": [f"Role không tồn tại: {', '.join(unknown)}."]})
     if OWNER_ROLE in codes and len(codes) > 1:
-        raise BusinessRuleError("Chủ ngựa là người ngoài CLB: không gộp role HORSE_OWNER với role nhân sự.",
+        raise BusinessRuleError("Chủ ngựa là người ngoài câu lạc bộ: không gộp role HORSE_OWNER với role nhân sự.",
                                 "OWNER_ROLE_EXCLUSIVE")
     current = set(user.role_codes)
     if (OWNER_ROLE in current) != (OWNER_ROLE in codes):
@@ -130,9 +130,9 @@ def set_roles(manager, user, role_codes):
     removed, added = sorted(current - set(codes)), sorted(set(codes) - current)
     if MANAGER_ROLE in removed:
         if user.pk == manager.pk:
-            raise BusinessRuleError("Không tự bỏ role Manager của chính mình.", "SELF_ACTION")
+            raise BusinessRuleError("Không tự bỏ chức vụ Quản lý câu lạc bộ của chính mình.", "SELF_ACTION")
         if not _active_managers(user.club_id, exclude=user).exists():
-            raise BusinessRuleError("CLB phải còn ít nhất 1 Manager đang hoạt động.", "LAST_MANAGER")
+            raise BusinessRuleError("câu lạc bộ phải còn ít nhất 1 Quản lý câu lạc bộ đang hoạt động.", "LAST_MANAGER")
     _ensure_free(user, removed, "gỡ role")
     UserRole.objects.filter(user=user, role__code__in=removed).delete()
     for role in Role.objects.filter(code__in=added):
@@ -149,7 +149,7 @@ def lock_user(manager, user, reason=None):
     if user.status == User.Status.SUSPENDED:
         raise BusinessRuleError("Tài khoản đã bị khóa.", "INVALID_STATUS")
     if MANAGER_ROLE in user.role_codes and not _active_managers(user.club_id, exclude=user).exists():
-        raise BusinessRuleError("CLB phải còn ít nhất 1 Manager đang hoạt động.", "LAST_MANAGER")
+        raise BusinessRuleError("câu lạc bộ phải còn ít nhất 1 Quản lý câu lạc bộ đang hoạt động.", "LAST_MANAGER")
     _ensure_free(user, [c for c in user.role_codes if c != OWNER_ROLE], "khóa tài khoản")
     user.status = User.Status.SUSPENDED
     user.save(update_fields=["status"])
@@ -172,7 +172,8 @@ def reset_password(manager, user):
         raise BusinessRuleError("Đổi mật khẩu của chính mình ở mục Tài khoản (đổi mật khẩu).", "SELF_ACTION")
     temporary = secrets.token_urlsafe(9)
     user.set_password(temporary)
-    user.save(update_fields=["password"])
+    user.must_change_password = True
+    user.save(update_fields=["password", "must_change_password"])
     log_action(manager, "RESET_USER_PASSWORD", user)
     return temporary
 

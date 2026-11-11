@@ -1,3 +1,4 @@
+import { dateLocale } from '../../i18n/runtime.js'
 import { useEffect, useRef, useState } from 'react'
 import { Link, useBlocker, useParams } from 'react-router-dom'
 import { getChangeRequestOptions, getHorseById, getHorseDocuments, getProfileChangeRequests, submitProfileProposal, withdrawProfileProposal } from '../../api/horseApi.ts'
@@ -231,7 +232,7 @@ export default function OwnerCorrectionRequest({ horse: initialHorse, requests: 
       <div className="correction-form__actions"><Link to={`/owner/horses/${horseId}`}>Hủy</Link><button className="button" type="submit" disabled={submitting || !changeCount || files.some((item) => item.error)}>{submitting ? 'Đang gửi…' : 'Gửi yêu cầu duyệt'}</button></div>
     </fieldset></form>
     <section className="correction-history correction-section"><div className="correction-section-body"><h2>Lịch sử yêu cầu ({history.length})</h2>{history.length === 0 ? <p>Chưa có yêu cầu cập nhật hồ sơ.</p> : history.map((request) => <article className="correction-history__item" id={`request-${request.requestId}`} key={request.requestId}>
-      <details><summary><strong>Yêu cầu #{request.requestId}</strong><span className="correction-history__status">{proposalStatusLabels[request.status] || request.status}</span></summary><p>Gửi lúc {new Date(request.createdAt).toLocaleString('en-US')}</p><ProfileProposalDetails request={request} />{request.status === 'Rejected' && !pending && <button type="button" className="button button-secondary" disabled={submitting} onClick={() => void reuseRejected(request)}>Tạo yêu cầu mới từ yêu cầu bị từ chối</button>}</details>
+      <details><summary><strong>Yêu cầu #{request.requestId}</strong><span className="correction-history__status">{proposalStatusLabels[request.status] || request.status}</span></summary><p>Gửi lúc {new Date(request.createdAt).toLocaleString(dateLocale(), { hourCycle: 'h23' })}</p><ProfileProposalDetails request={request} />{request.status === 'Rejected' && !pending && <button type="button" className="button button-secondary" disabled={submitting} onClick={() => void reuseRejected(request)}>Tạo yêu cầu mới từ yêu cầu bị từ chối</button>}</details>
       <p>{request.changes.length} trường · {request.attachments.length} tệp · {request.removedImages.length} ảnh gỡ{request.avatarDocument ? ' · Thay ảnh đại diện' : ''}</p>
       {request.status === 'Pending' && <button className="button button-secondary" type="button" disabled={submitting} onClick={() => void withdrawRequest(request)}>{submitting ? 'Đang xử lý…' : 'Rút yêu cầu'}</button>}
     </article>)}</div></section>

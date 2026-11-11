@@ -37,7 +37,7 @@ STAFF_VIEW = "HORSE_VIEW"
 
 
 def staff_horse(user, horse_id):
-    """Ngựa trong CLB của nhân sự đang đăng nhập (404 nếu không thấy)."""
+    """Ngựa trong câu lạc bộ của nhân sự đang đăng nhập (404 nếu không thấy)."""
     if not user.has_perm(STAFF_VIEW):
         raise PermissionDenied("Bạn không có quyền xem dữ liệu huấn luyện.")
     return get_visible_horse(user, horse_id)
@@ -65,7 +65,7 @@ def latest_recommendation(horse):
 
 
 def trainer_row(trainer, active_counts=None):
-    """Thông tin 1 trainer: tên, chuyên môn, hồ sơ năng lực (tính từ giấy tờ, kết quả đua), số ngựa đang phụ trách."""
+    """Thông tin 1 huấn luyện viên: tên, chuyên môn, hồ sơ năng lực (tính từ giấy tờ, kết quả đua), số ngựa đang phụ trách."""
     links = list(trainer.specialization_links.select_related("specialization"))
     profile = TrainerProfile.objects.filter(trainer=trainer).first()
     if active_counts is None:
@@ -85,13 +85,13 @@ def trainer_row(trainer, active_counts=None):
 def club_trainer(user, trainer_id):
     trainer = club_users_with_role(user.club_id, "TRAINER").filter(pk=trainer_id).first()
     if trainer is None:
-        raise NotFound("Không tìm thấy trainer trong CLB.")
+        raise NotFound("Không tìm thấy huấn luyện viên trong câu lạc bộ.")
     return trainer
 
 
 def can_view_trainer(user, trainer_id):
     if user.pk != trainer_id and not any(user.has_perm(code) for code in TRAINER_VIEWERS):
-        raise PermissionDenied("Bạn không có quyền xem hồ sơ trainer.")
+        raise PermissionDenied("Bạn không có quyền xem hồ sơ huấn luyện viên.")
 
 
 class TrainerListView(APIView):
@@ -240,7 +240,7 @@ class TrainerRaceResultListView(APIView):
 
 
 class TrainerRaceResultDetailView(APIView):
-    """DELETE /api/trainer-race-results/<RaceResultID> (ghi nhầm)"""
+    """DELETE /api/huấn luyện viên-race-results/<RaceResultID> (ghi nhầm)"""
 
     permission_classes = [HasAnyPermission(*TRAINER_EDITORS)]
 
@@ -263,7 +263,7 @@ class TrainerSpecializationView(APIView):
     def _trainer(self, request, user_id):
         trainer = club_users_with_role(request.user.club_id, "TRAINER").filter(pk=user_id).first()
         if trainer is None:
-            raise NotFound("Không tìm thấy trainer trong CLB.")
+            raise NotFound("Không tìm thấy huấn luyện viên trong câu lạc bộ.")
         return trainer
 
     def post(self, request, user_id, spec_id=None):
@@ -363,7 +363,8 @@ class TrainerAssignmentViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin,
         body["TrainerExperienceLevel"] = row["ExperienceLevel"]
         body["RequiredLevel"] = check["RequiredLevel"]
         body["LevelWarning"] = None if check["MatchesLevel"] else (
-            f"Ngựa này nên giao trainer {check['RequiredLevel']} trở lên, trainer đang là {row['ExperienceLevel']}.")
+            f"Ngựa này nên giao cho huấn luyện viên cấp độ {profiles.LEVEL_NAMES_VI[check['RequiredLevel']]} trở lên, "
+            f"huấn luyện viên được chọn đang ở cấp độ {profiles.LEVEL_NAMES_VI[row['ExperienceLevel']]}.")
         return Response(body, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"])
@@ -378,11 +379,11 @@ class TrainerAssignmentViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin,
 # Work Rider ưu tiên
 # ---------------------------------------------------------------------------
 def ensure_horse_session_manager(user, horse):
-    """Head Trainer: mọi ngựa; Trainer: ngựa mình đang phụ trách (ngựa chưa có trainer thì chỉ Head Trainer)."""
+    """Huấn luyện viên trưởng: mọi ngựa; Huấn luyện viên: ngựa mình đang phụ trách (ngựa chưa có huấn luyện viên thì chỉ Huấn luyện viên trưởng)."""
     assignment = services.active_assignment(horse)
     if user.has_perm("TRAINING_PLAN_APPROVE") or (assignment and services.can_manage_sessions(user, assignment)):
         return
-    raise PermissionDenied("Bạn chỉ quản lý Work Rider / buổi tập của ngựa mình đang phụ trách.")
+    raise PermissionDenied("Bạn chỉ quản lý kỵ sĩ tập luyện và buổi tập của ngựa mình đang phụ trách.")
 
 class WorkRiderPreferenceView(APIView):
     """GET / POST /api/horses/<HorseID>/work-rider-preferences"""
@@ -448,7 +449,7 @@ class TrainingPlanViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, view
 
     def get_queryset(self):
         qs = TrainingPlan.objects.filter(assignment__horse__club_id=self.request.user.club_id).select_related(
-            "assignment__horse", "assignment__trainer").prefetch_related("stages")
+            "assignment__horse", "assignment__trainer", "assignment__specialization", "approved_by").prefetch_related("stages")
         p = self.request.query_params
         if p.get("HorseID"):
             qs = qs.filter(assignment__horse_id=int_param(p, "HorseID"))
@@ -490,7 +491,7 @@ class TrainingPlanViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, view
 
     @action(detail=True, methods=["get"], url_path="template-review")
     def template_review(self, request, pk=None):
-        """Giáo án mẫu đã dùng + phiếu đánh giá ngựa + những gì đã sửa so với mẫu (trainer sửa, Head Trainer duyệt)."""
+        """Giáo án mẫu đã dùng + phiếu đánh giá ngựa + những gì đã sửa so với mẫu (huấn luyện viên sửa, Huấn luyện viên trưởng duyệt)."""
         return Response(plan_templates.template_review(self.get_object()))
 
     @extend_schema(request=RescheduleSerializer)
@@ -505,13 +506,13 @@ class TrainingPlanViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, view
     @extend_schema(request=FromTemplateSerializer)
     @action(detail=False, methods=["post"], url_path="from-template")
     def from_template(self, request):
-        """Trainer phụ trách tạo (lại) bản nháp từ giáo án mẫu của chuyên môn khi ngựa chưa có bản nháp / chờ duyệt."""
+        """Huấn luyện viên phụ trách tạo (lại) bản nháp từ giáo án mẫu của chuyên môn khi ngựa chưa có bản nháp / chờ duyệt."""
         data = FromTemplateSerializer(data=request.data)
         data.is_valid(raise_exception=True)
         horse = staff_horse(request.user, data.validated_data["HorseID"])
         assignment = services.active_assignment(horse)
         if assignment is None or assignment.trainer_id != request.user.pk:
-            raise PermissionDenied("Chỉ trainer đang phụ trách ngựa mới tạo giáo án.")
+            raise PermissionDenied("Chỉ huấn luyện viên đang phụ trách ngựa mới tạo được giáo án.")
         if assignment.plans.filter(status__in=("Draft", "Pending Approval")).exists():
             raise ValidationError({"HorseID": ["Ngựa đã có giáo án đang soạn / chờ duyệt."]})
         template = plan_templates.template_for(horse.club, assignment.specialization)
@@ -556,7 +557,7 @@ class TrainingPlanViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, view
 
 
 class TrainingPlanStageView(APIView):
-    """PATCH / DELETE /api/training-plan-stages/<id> (giáo án Draft, trainer phụ trách)"""
+    """PATCH / DELETE /api/training-plan-stages/<id> (giáo án Draft, huấn luyện viên phụ trách)"""
 
     permission_classes = [HasAnyPermission("TRAINING_PLAN_MANAGE")]
 
@@ -659,9 +660,17 @@ class TrainingSessionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, v
     def _out(self, session, code=status.HTTP_200_OK):
         return Response(TrainingSessionSerializer(self.get_queryset().get(pk=session.pk)).data, status=code)
 
+    def list(self, request, *args, **kwargs):
+        from .summaries import end_reasons
+
+        rows = list(self.filter_queryset(self.get_queryset()))
+        ended = [s.pk for s in rows if s.status in ("Cancelled", "Missed")]
+        context = {**self.get_serializer_context(), "end_reasons": end_reasons(ended)}
+        return Response(TrainingSessionSerializer(rows, many=True, context=context).data)
+
     def _stage(self, stage):
         if stage.plan.assignment.horse.club_id != self.request.user.club_id:
-            raise ValidationError({"TrainingPlanStageID": ["Giai đoạn không thuộc CLB của bạn."]})
+            raise ValidationError({"TrainingPlanStageID": ["Giai đoạn không thuộc câu lạc bộ của bạn."]})
         return stage
 
     def create(self, request):
@@ -693,10 +702,14 @@ class TrainingSessionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, v
 
     @action(detail=True, methods=["post"])
     def result(self, request, pk=None):
-        data = TrainingResultSerializer(data=request.data)
-        data.is_valid(raise_exception=True)
         session = self.get_object()
-        services.record_result(session, request.user, dict(data.validated_data))
+        if session.work_rider_id == request.user.pk and session.status == "In Progress":
+            data = TrainingResultSerializer(data=request.data, context={"session": session})
+            data.is_valid(raise_exception=True)
+            values = dict(data.validated_data)
+        else:
+            values = {}          # sai người / sai trạng thái: báo lỗi nghiệp vụ trước lỗi nhập liệu
+        services.record_result(session, request.user, values)
         return self._out(session)
 
     @action(detail=True, methods=["post"], url_path="substitute-observation")
@@ -709,25 +722,25 @@ class TrainingSessionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, v
 
     @action(detail=True, methods=["post"])
     def stop(self, request, pk=None):
-        """Trainer đang giám sát (hoặc Head Trainer) dừng buổi tập; có Flow 3 và ReportHealth=true thì báo luôn cho Vet."""
+        """Huấn luyện viên đang giám sát (hoặc Huấn luyện viên trưởng) dừng buổi tập; có Flow 3 và ReportHealth=true thì báo luôn cho bác sĩ thú y."""
         session = self.get_object()
         if not (services.is_supervisor(session, request.user)
                 or services.can_manage_sessions(request.user, session.assignment)):
-            raise PermissionDenied("Chỉ trainer đang giám sát buổi tập, trainer phụ trách hoặc Head Trainer "
-                                   "mới dừng buổi tập.")
+            raise PermissionDenied("Chỉ huấn luyện viên đang giám sát, huấn luyện viên phụ trách hoặc "
+                                   "Huấn luyện viên trưởng mới dừng được buổi tập.")
         data = StopSessionSerializer(data=request.data)
         data.is_valid(raise_exception=True)
         v = data.validated_data
-        services.stop_session(session, request.user, v["Reason"])
-        body = TrainingSessionSerializer(self.get_queryset().get(pk=session.pk)).data
+        report = None
         if v.get("ReportHealth"):  # chỉ có khi đã có Flow 3
             from apps.medical import services as medical_services
-
-            report = medical_services.create_health_report(
-                session.horse, request.user, {"severity": v["Severity"],
-                                              "description": v.get("Description") or v["Reason"],
-                                              "training_session": session})
-            body["HealthReportID"] = report.id
+            report = medical_services.training_incident(session, request.user, v.get("Description") or v["Reason"])
+            session.refresh_from_db()
+        if session.status in ("Assigned", "In Progress"):
+            services.stop_session(session, request.user, v["Reason"])
+        body = TrainingSessionSerializer(self.get_queryset().get(pk=session.pk)).data
+        if report:
+            body["HealthReportID"] = report.pk
         return Response(body)
 
     @action(detail=True, methods=["post"])
@@ -755,7 +768,7 @@ class TrainingSessionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, v
 
 
 class TrainingReviewListView(APIView):
-    """GET /api/training-reviews?AdjustmentRequired=1&HorseID=&Days=14 - Head Trainer theo dõi đánh giá."""
+    """GET /api/training-reviews?AdjustmentRequired=1&HorseID=&Days=14 - Huấn luyện viên trưởng theo dõi đánh giá."""
 
     permission_classes = [HasAnyPermission(STAFF_VIEW)]
 
@@ -826,7 +839,7 @@ class TrainingDashboardView(APIView):
 # Giáo án mẫu (mỗi chuyên môn 1 bản trong CLB)
 # ---------------------------------------------------------------------------
 class TrainingPlanTemplateListView(APIView):
-    """GET /api/training-plan-templates?SpecializationID= - giáo án mẫu của CLB (thiếu chuyên môn nào thì tạo bản mặc định)."""
+    """GET /api/training-plan-templates?SpecializationID= - giáo án mẫu của câu lạc bộ (thiếu chuyên môn nào thì tạo bản mặc định)."""
 
     permission_classes = [HasAnyPermission(STAFF_VIEW)]
 

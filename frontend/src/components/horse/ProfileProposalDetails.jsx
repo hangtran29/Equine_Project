@@ -1,3 +1,4 @@
+import { dateLocale } from '../../i18n/runtime.js'
 import { useEffect, useState } from 'react'
 import { getProposalFile } from '../../api/horseApi.ts'
 
@@ -68,7 +69,7 @@ export default function ProfileProposalDetails({ request }) {
     {request.removedImages.map((item) => <p key={item.DocumentID}>Đề nghị gỡ ảnh: <ExistingDocument item={item} /></p>)}
     {request.evidenceDocuments.map((item) => <p key={item.DocumentID}>Minh chứng trong hồ sơ: <ExistingDocument item={item} /></p>)}
     <p><strong>Lý do:</strong> {request.reason}</p>
-    {request.reviewedAt && <p>Xử lý: {new Date(request.reviewedAt).toLocaleString('en-US')} · {request.reviewedByName || 'Manager'}</p>}
+    {request.reviewedAt && <p>Xử lý: {new Date(request.reviewedAt).toLocaleString(dateLocale(), { hourCycle: 'h23' })} · {request.reviewedByName || 'Manager'}</p>}
     {request.rejectionReason && <p><strong>Phản hồi:</strong> {request.rejectionReason}</p>}
   </div>
 }

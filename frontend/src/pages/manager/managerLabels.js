@@ -1,4 +1,4 @@
-export const roleLabels = { CLUB_MANAGER: 'Quản lý câu lạc bộ', HEAD_TRAINER: 'Huấn luyện viên trưởng', TRAINER: 'Huấn luyện viên', WORK_RIDER: 'Kỵ sĩ tập luyện', VETERINARIAN: 'Bác sĩ thú y', GROOM: 'Nhân viên chăm sóc', HORSE_OWNER: 'Chủ ngựa' }
+export const roleLabels = { CLUB_MANAGER: 'Quản lý câu lạc bộ', HEAD_TRAINER: 'Huấn luyện viên trưởng', TRAINER: 'Huấn luyện viên', WORK_RIDER: 'Kỵ sĩ tập luyện', VETERINARIAN: 'Bác sĩ thú y', GROOM: 'Người chăm sóc ngựa', HORSE_OWNER: 'Chủ ngựa' }
 export const permissionLabels = {
   CLUB_MANAGE: 'Quản lý câu lạc bộ', RBAC_MANAGE: 'Quản lý tài khoản và phân quyền', AUDIT_VIEW: 'Xem nhật ký hệ thống',
   HORSE_VIEW: 'Xem ngựa trong câu lạc bộ', HORSE_REGISTER: 'Đăng ký ngựa', HORSE_REGISTER_REVIEW: 'Duyệt tiếp nhận ngựa',

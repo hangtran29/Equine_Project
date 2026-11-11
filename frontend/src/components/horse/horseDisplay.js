@@ -1,3 +1,4 @@
+import { dateLocale } from '../../i18n/runtime.js'
 const missingValue = 'Chưa cập nhật'
 
 export function formatHorseCode(code) {
@@ -25,16 +26,17 @@ export function formatHorseDateTime(value) {
   const hasTimeZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized)
   const date = new Date(hasTimeZone ? normalized : `${normalized}+07:00`)
   if (Number.isNaN(date.getTime())) return missingValue
-  const parts = new Intl.DateTimeFormat('en-US', {
+  const parts = new Intl.DateTimeFormat(dateLocale(), {
     timeZone: 'Asia/Ho_Chi_Minh',
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
     hour: '2-digit',
+    minute: '2-digit',
     hourCycle: 'h23',
   }).formatToParts(date)
   const part = (type) => parts.find((item) => item.type === type)?.value || ''
-  return `${part('day')}/${part('month')}/${part('year')} ${part('hour')}`
+  return `${part('day')}/${part('month')}/${part('year')} ${part('hour')}:${part('minute')}`
 }
 
 export function getHorseAge(value) {

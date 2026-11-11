@@ -24,28 +24,31 @@ def main():
     from django.core.files.uploadedfile import SimpleUploadedFile
     from apps.horses import documents as store
     from apps.horses.models import Horse, HorseDocument
-    from .helpers import Flow1TestCase
+    from apps.training.tests.base import TrainingTestCase as BrowserCase
 
     for model in apps.get_models():
         model._meta.managed = True
     call_command("migrate", run_syncdb=True, verbosity=0)
-    Flow1TestCase.setUpTestData()
+    BrowserCase.setUpTestData()
     horse = Horse.objects.create(
-        owner=Flow1TestCase.owner, club=Flow1TestCase.club, horse_name="Thunder",
+        owner=BrowserCase.owner, club=BrowserCase.club, horse_name="Thunder",
         breed="Thoroughbred", gender="Male", date_of_birth="2021-03-10", coat_color="Bay",
         sire_name="Storm King", dam_name="Lady Rain", microchip_number="985000000000001",
         passport_number="VN-001", horse_code="EQ-001", registration_status="Approved")
     photo = settings.BASE_DIR.parent / "frontend" / "public" / "landing-horse.jpg"
     HorseDocument.objects.create(
-        horse=horse, document_name="Thunder", document_type="Other", uploaded_by=Flow1TestCase.owner,
+        horse=horse, document_name="Thunder", document_type="Other", uploaded_by=BrowserCase.owner,
         file_url=store.save_upload(horse.id, SimpleUploadedFile("thunder.jpg", photo.read_bytes())),
         is_primary=True, is_profile_image=True)
     HorseDocument.objects.create(
-        horse=horse, document_name="Registration certificate", document_type="Passport", uploaded_by=Flow1TestCase.owner,
+        horse=horse, document_name="Registration certificate", document_type="Passport", uploaded_by=BrowserCase.owner,
         file_url=store.save_upload(horse.id, SimpleUploadedFile("passport.pdf", b"%PDF-1.4\n%%EOF")))
-    print("Browser fixture: isolated SQLite database ready on 127.0.0.1:8001", flush=True)
+    from apps.care.automation import set_horse_groom
+    set_horse_groom(horse, BrowserCase.groom, BrowserCase.manager)
+    port = int(os.environ.get("EQUI_BROWSER_PORT", "8001"))
+    print(f"Browser fixture: isolated SQLite database ready on 127.0.0.1:{port}", flush=True)
     try:
-        call_command("runserver", "127.0.0.1:8001", use_reloader=False)
+        call_command("runserver", f"127.0.0.1:{port}", use_reloader=False)
     finally:
         from django.db import connections
         connections.close_all()

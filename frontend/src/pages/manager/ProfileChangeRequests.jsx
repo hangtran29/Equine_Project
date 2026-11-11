@@ -1,3 +1,4 @@
+import { dateLocale } from '../../i18n/runtime.js'
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { getProfileChangeRequests, reviewProfileChangeRequest } from '../../api/horseApi.ts'
@@ -77,7 +78,7 @@ function ProfileChangeRequests({ onHorseRefresh }) {
               <p className="profile-id">Request #{request.requestId} · {statusLabels[request.status] || request.status}</p>
               <h2>{request.horseName || `Horse #${request.horseId}`}</h2>
               <ProfileProposalDetails request={request} />
-              {request.createdAt && <p><small>Gửi lúc {new Date(request.createdAt).toLocaleString()}</small></p>}
+              {request.createdAt && <p><small>Gửi lúc {new Date(request.createdAt).toLocaleString(dateLocale(), { hourCycle: 'h23' })}</small></p>}
               <p><Link to={`/manager/horses/${request.horseId}/intake`}>Mở hồ sơ tiếp nhận</Link></p>
               {request.status === 'Pending' && (
                 <>

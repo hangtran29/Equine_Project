@@ -1,3 +1,4 @@
+from apps.core.clubtime import now as club_now, today as club_today
 from datetime import date
 
 from rest_framework import serializers
@@ -13,8 +14,8 @@ from .models import (
 # Có Flow 2 thì báo cáo sức khỏe gắn được với buổi tập (TrainingSessionID)
 SESSION_FIELD = ["training_session"] if flows.has_training() else []
 
-EXAM_FIELDS = ["exam_date", "weight_kg", "height_cm", "symptoms", "diagnosis", "conclusion", "injury_location",
-               "treatment_plan", "health_status", "training_eligibility", "restriction_note", "follow_up_date", "note"]
+EXAM_FIELDS = ["exam_date", "weight_kg", "height_cm", "body_temperature_c", "heart_rate_bpm", "respiratory_rate", "symptoms", "diagnosis", "conclusion", "injury_location",
+               "treatment_plan", "health_status", "training_eligibility", "restriction_note", "follow_up_date", "follow_up_lock", "note"]
 
 class MedicalRecordSerializer(DBColumnModelSerializer):
     """Phiếu khám: trả về đúng tên cột MedicalRecord, thêm VetName và HorseName để hiển thị."""
@@ -48,7 +49,7 @@ class MedicalRecordWriteSerializer(DBColumnModelSerializer):
     def validate_exam_type(self, value):
         if value != MedicalRecord.ExamType.INITIAL and not flows.has_flow3():
             from apps.core.exceptions import BusinessRuleError
-            raise BusinessRuleError("Bản backend này chỉ hỗ trợ khám đầu vào Flow 1.", "EXAM_TYPE_UNAVAILABLE")
+            raise BusinessRuleError("Hệ thống hiện chỉ hỗ trợ phiếu khám lâm sàng nhập đàn.", "EXAM_TYPE_UNAVAILABLE")
         return value
 
     def validate_weight_kg(self, value):
@@ -61,10 +62,25 @@ class MedicalRecordWriteSerializer(DBColumnModelSerializer):
             raise serializers.ValidationError("Chiều cao phải lớn hơn 0.")
         return value
 
+    def validate_body_temperature_c(self, value):
+        if value is not None and not 30 <= value <= 45:
+            raise serializers.ValidationError("Thân nhiệt phải trong khoảng 30–45 °C.")
+        return value
+
+    def validate_heart_rate_bpm(self, value):
+        if value is not None and not 10 <= value <= 250:
+            raise serializers.ValidationError("Nhịp tim phải trong khoảng 10–250 lần/phút.")
+        return value
+
+    def validate_respiratory_rate(self, value):
+        if value is not None and not 2 <= value <= 150:
+            raise serializers.ValidationError("Nhịp thở phải trong khoảng 2–150 lần/phút.")
+        return value
+
     def validate(self, attrs):
         exam_date = attrs.get("exam_date") or getattr(self.instance, "exam_date", None)
         follow_up = attrs.get("follow_up_date", getattr(self.instance, "follow_up_date", None))
-        exam_day = exam_date.date() if exam_date else date.today()
+        exam_day = exam_date.date() if exam_date else club_today()
         if follow_up and follow_up < exam_day:
             raise serializers.ValidationError({"FollowUpDate": ["Ngày tái khám không được trước ngày khám."]})
         return attrs
@@ -121,7 +137,7 @@ class TreatmentSerializer(DBColumnModelSerializer):
 
     def get_WithdrawalActive(self, obj):
         """true = còn trong thời gian ngưng thuốc (chưa được thi đấu / kiểm tra doping)."""
-        return bool(obj.withdrawal_until and obj.withdrawal_until >= date.today())
+        return bool(obj.withdrawal_until and obj.withdrawal_until >= club_today())
 
 
 class VaccinationSerializer(DBColumnModelSerializer):
@@ -137,7 +153,7 @@ class VaccinationSerializer(DBColumnModelSerializer):
         read_only_fields = ["id", "horse", "HorseName", "vet", "VetName", "IsOverdue"]
 
     def get_IsOverdue(self, obj):
-        return obj.status == "Scheduled" and obj.vaccination_date < date.today()
+        return obj.status == "Overdue" or obj.status == "Scheduled" and obj.vaccination_date < club_today()
 
 
 class MedicalScheduleSerializer(DBColumnModelSerializer):
@@ -153,7 +169,7 @@ class MedicalScheduleSerializer(DBColumnModelSerializer):
         read_only_fields = ["id", "horse", "HorseName", "vet", "VetName", "IsOverdue"]
 
     def get_IsOverdue(self, obj):
-        return obj.status == "Scheduled" and obj.scheduled_date < date.today()
+        return obj.status == "Overdue" or obj.status == "Scheduled" and obj.scheduled_date < club_today()
 
 
 class HealthReportNoteSerializer(DBColumnModelSerializer):
@@ -171,28 +187,41 @@ class HealthReportSerializer(DBColumnModelSerializer):
     ReportedByRoles = serializers.SerializerMethodField()
     VetName = serializers.CharField(source="vet.full_name", read_only=True, default=None)
     Notes = HealthReportNoteSerializer(source="notes", many=True, read_only=True)
+    Attachments = serializers.SerializerMethodField()
 
     class Meta:
         model = HealthReport
         fields = ["id", "horse", "HorseName", "reported_by", "ReportedByName", "ReportedByRoles", *SESSION_FIELD,
                   "reported_at", "severity", "description", "image_url", "status", "vet", "VetName",
-                  "medical_record", "vet_note", "resolved_at", "Notes"]
+                  "medical_record", "vet_note", "resolved_at", "Notes", "Attachments"]
         read_only_fields = fields
 
     def get_ReportedByRoles(self, obj):
         return sorted(obj.reported_by.role_codes)
 
+    def get_Attachments(self, obj):
+        return [{"AttachmentID": a.pk, "FilePath": f"/health-report-attachments/{a.pk}/file"} for a in obj.attachments.all()]
+
 
 class HealthReportCreateSerializer(DBColumnModelSerializer):
     """Body: {"Severity": "Urgent", "Description": "Chân trước trái sưng nóng", "ImageUrl": null, "TrainingSessionID": 12}"""
 
+    AttachmentIDs = serializers.ListField(child=serializers.IntegerField(min_value=1), required=False, max_length=8)
+
     class Meta:
         model = HealthReport
-        fields = ["severity", "description", "image_url", *SESSION_FIELD]
+        fields = ["severity", "description", "image_url", *SESSION_FIELD, "AttachmentIDs"]
+
+    def validate_image_url(self, value):
+        if value:
+            raise serializers.ValidationError("Hãy tải ảnh lên qua API đính kèm; không nhận đường dẫn file từ trình duyệt.")
+        return value
 
 
 class ContentSerializer(serializers.Serializer):
     Content = serializers.CharField(max_length=2000)
+    Severity = serializers.ChoiceField(choices=["Normal", "Urgent"], required=False)
+    AttachmentIDs = serializers.ListField(child=serializers.IntegerField(min_value=1), required=False, max_length=8)
 
 
 class ResolveReportSerializer(serializers.Serializer):
@@ -202,6 +231,7 @@ class ResolveReportSerializer(serializers.Serializer):
 
 class ReleaseLockSerializer(serializers.Serializer):
     Note = serializers.CharField(max_length=1000, required=False, allow_blank=True, allow_null=True)
+    FollowUpMedicalRecordID = serializers.IntegerField(required=False, min_value=1)
 
 
 class VetDutyShiftSerializer(DBColumnModelSerializer):

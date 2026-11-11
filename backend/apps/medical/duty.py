@@ -6,6 +6,7 @@ Club Manager xếp ca trực theo ngày. Bác sĩ đang trực được báo tr�
   - Flow 3: báo cáo sức khỏe khẩn (email ngay).
 Bác sĩ khác vẫn thấy hàng chờ và nhận ca giúp được. Không ai trực -> báo mọi bác sĩ của CLB.
 """
+from apps.core.clubtime import now as club_now, today as club_today
 from datetime import date, datetime, time, timedelta
 
 from django.utils import timezone
@@ -27,12 +28,12 @@ SHIFT_HOURS = {
 
 
 def _local_now():
-    now = timezone.now()
+    now = club_now()
     return timezone.localtime(now) if timezone.is_aware(now) else now
 
 
 def shift_covers(shift, duty_date, moment):
-    """Ca `shift` của ngày `duty_date` có bao phủ thời điểm `moment` (datetime, giờ CLB) không."""
+    """Ca `shift` của ngày `duty_date` có bao phủ thời điểm `moment` (datetime, giờ câu lạc bộ) không."""
     start, end = SHIFT_HOURS[shift]
     begin = datetime.combine(duty_date, start)
     finish = datetime.combine(duty_date + timedelta(days=1) if end <= start else duty_date, end)
@@ -63,14 +64,14 @@ def is_on_duty(user, moment=None):
 
 
 def vets_to_alert(club_id, moment=None):
-    """Người cần báo ngay: bác sĩ đang trực; không ai trực thì mọi bác sĩ đang hoạt động của CLB."""
+    """Người cần báo ngay: bác sĩ đang trực; không ai trực thì mọi bác sĩ đang hoạt động của câu lạc bộ."""
     vets = on_duty_vets(club_id, moment)
     return vets or list(club_users_with_role(club_id, "VETERINARIAN"))
 
 
 def create_shift(user, vet_id, duty_date, shift, note=None):
     vet = require_club_user(vet_id, user.club_id, "VETERINARIAN", field="VetID")
-    if duty_date < date.today():
+    if duty_date < club_today():
         raise BusinessRuleError("Không xếp lịch trực cho ngày đã qua.", "PAST_DATE")
     if VetDutyShift.objects.filter(club_id=user.club_id, vet=vet, duty_date=duty_date, shift=shift).exists():
         raise BusinessRuleError("Bác sĩ này đã có ca trực này trong ngày.", "ALREADY_EXISTS")
@@ -81,7 +82,7 @@ def create_shift(user, vet_id, duty_date, shift, note=None):
 
 
 def delete_shift(item, user):
-    if item.duty_date < date.today():
+    if item.duty_date < club_today():
         raise BusinessRuleError("Không xóa ca trực đã qua (giữ làm lịch sử).", "PAST_DATE")
     log_action(user, "DELETE_VET_DUTY_SHIFT", item, {"VetID": item.vet_id, "DutyDate": item.duty_date,
                                                      "Shift": item.shift})

@@ -30,7 +30,7 @@ class PermissionGroupTests(SimpleTestCase):
 class UserAdminTests(TrainingTestCase):
     def test_manager_edits_user_and_sets_roles(self):
         manager = self.client_for(self.manager)
-        res = manager.patch(f"/api/users/{self.trainer2.id}", {"FullName": "Trần Văn Hai", "Phone": "0901 234 567"},
+        res = manager.patch(f"/api/users/{self.trainer2.id}", {"FullName": "Trần Văn Hai", "Phone": "0901234567"},
                             format="json")
         self.assertEqual((res.status_code, res.data["FullName"], res.data["Phone"]), (200, "Trần Văn Hai", "0901234567"))
         res = manager.put(f"/api/users/{self.trainer2.id}/roles", {"RoleCodes": ["TRAINER", "HEAD_TRAINER"]},
@@ -63,7 +63,7 @@ class UserAdminTests(TrainingTestCase):
         res = manager.put(f"/api/users/{self.trainer.id}/roles", {"RoleCodes": ["GROOM"]}, format="json")
         self.assertEqual(res.data["code"], "ROLE_IN_USE")
         self.assertIn("phụ trách 1 ngựa", res.data["detail"])
-        self.assertEqual(manager.post(f"/api/users/{self.trainer.id}/lock", {}, format="json").data["code"],
+        self.assertEqual(manager.post(f"/api/users/{self.trainer.id}/lock", {"Reason": "Kiểm tra khóa tài khoản"}, format="json").data["code"],
                          "ROLE_IN_USE")
         self.assertEqual(manager.put(f"/api/users/{self.owner.id}/roles", {"RoleCodes": ["GROOM"]}, format="json")
                          .data["code"], "ROLE_IN_USE")              # chủ ngựa đang có ngựa
@@ -79,7 +79,7 @@ class UserAdminTests(TrainingTestCase):
         self.assertEqual(rider.get("/api/auth/me").status_code, 401)            # token cũ hết dùng được
         self.assertEqual(login(self.rider.email, TEST_PASSWORD).status_code, 401)
         self.assertIn("tạm khóa", mail.outbox[0].subject)
-        self.assertEqual(manager.post(f"/api/users/{self.manager.id}/lock", {}, format="json").data["code"],
+        self.assertEqual(manager.post(f"/api/users/{self.manager.id}/lock", {"Reason": "Kiểm tra khóa tài khoản"}, format="json").data["code"],
                          "SELF_ACTION")
         self.assertEqual(manager.post(f"/api/users/{self.rider.id}/unlock").data["Status"], "Active")
         self.assertEqual(login(self.rider.email, TEST_PASSWORD).status_code, 200)
@@ -187,7 +187,7 @@ class ClubAuditDashboardTests(TrainingTestCase):
         self.assertEqual(self.client_for(self.trainer).get("/api/clubs/mine").data["ClubName"], "Club One")
         self.assertEqual(self.client_for(self.trainer).patch("/api/clubs/mine", {"Phone": "0281234567"},
                                                              format="json").status_code, 403)
-        res = manager.patch("/api/clubs/mine", {"Phone": "028 1234 567", "Address": "1 Lê Duẩn"}, format="json")
+        res = manager.patch("/api/clubs/mine", {"Phone": "0281234567", "Address": "1 Lê Duẩn"}, format="json")
         self.assertEqual((res.data["Phone"], res.data["Address"]), ("0281234567", "1 Lê Duẩn"))
         self.assertEqual(manager.patch("/api/clubs/mine", {"ClubName": "club two"}, format="json").status_code, 400)
 

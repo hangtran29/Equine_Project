@@ -1,4 +1,5 @@
 // The legacy FE name ELIGIBLE here means Healthy, never permission to train.
+import { dateLocale } from '../../i18n/locale.js'
 export const healthLabels = {
   ELIGIBLE: 'Khỏe mạnh', MONITORING: 'Cần theo dõi', INJURED: 'Chấn thương',
   ISOLATION: 'Cách ly', RECOVERING: 'Đang hồi phục', NOT_ASSESSED: 'Chưa đánh giá',
@@ -31,7 +32,7 @@ export function vetDateTime(value) {
   const wallTime = !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized)
   const date = new Date(wallTime ? `${normalized}Z` : normalized)
   if (!Number.isFinite(date.getTime())) return 'Chưa cập nhật'
-  return new Intl.DateTimeFormat('vi-VN', { timeZone: wallTime ? 'UTC' : clubTimezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(date)
+  return new Intl.DateTimeFormat(dateLocale(), { timeZone: wallTime ? 'UTC' : clubTimezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(date)
 }
 export function clubToday(now = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: clubTimezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now)

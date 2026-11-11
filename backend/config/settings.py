@@ -165,7 +165,15 @@ EMAIL_BACKEND = ("django.core.mail.backends.smtp.EmailBackend" if EMAIL_HOST_USE
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL") or (
     f"EquiTrack <{EMAIL_HOST_USER}>" if EMAIL_HOST_USER else "EquiTrack <no-reply@equi.local>")
 EMAIL_ASYNC = env_bool("EMAIL_ASYNC", True)
+# Email nghiệp vụ giữ mặc định bật; email đặt lại mật khẩu luôn được gửi.
+NOTIFICATION_EMAILS = env_bool("NOTIFICATION_EMAILS", True)
+# Dịch nội dung người dùng nhập khi giao diện ở chế độ EN (cần Internet; tắt bằng CONTENT_TRANSLATION=false)
+CONTENT_TRANSLATION = env_bool("CONTENT_TRANSLATION", False)
+TRANSLATION_CACHE_FILE = Path(os.getenv("TRANSLATION_CACHE_FILE") or BASE_DIR / "translation_cache.json")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+# Tên miền email do câu lạc bộ cấp nhưng không có hộp thư thật: quên mật khẩu thì liên hệ Quản lý (QL05).
+# Khi câu lạc bộ có hộp thư thật cho tên miền này, xóa khỏi danh sách (để trống: mọi email đều nhận liên kết).
+NO_MAILBOX_DOMAINS = [d.strip().lower() for d in os.getenv("NO_MAILBOX_DOMAINS", "").split(",") if d.strip()]
 
 # ---------- Đăng nhập bằng Google ----------
 # Client ID lấy ở Google Cloud Console → APIs & Services → Credentials → OAuth client ID (Web application).
@@ -173,7 +181,8 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
 
 LANGUAGE_CODE = "vi"
-TIME_ZONE = "Asia/Ho_Chi_Minh"
+TIME_ZONE = os.getenv("TIME_ZONE", "Asia/Ho_Chi_Minh")
+CARE_REFUSAL_THRESHOLD = max(2, int(os.getenv("CARE_REFUSAL_THRESHOLD", "2")))
 USE_I18N = True
 USE_TZ = False  # cột DATETIME2 trong SQL Server lưu giờ địa phương, không có múi giờ
 

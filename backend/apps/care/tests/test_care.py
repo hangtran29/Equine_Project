@@ -35,7 +35,7 @@ class DietTests(TrainingTestCase):
         self.assertEqual(plan["Status"], "Pending")
         self.assertEqual(len(plan["Meals"]), 2)
         self.assertEqual(plan["Meals"][1]["Quantity"], 6.5)
-        self.assertEqual(head.post(f"/api/diet-plans/{plan_id}/approve", {}, format="json").status_code, 403)
+        self.assertEqual(vet.post(f"/api/diet-plans/{plan_id}/approve", {}, format="json").status_code, 403)
         self.assertEqual([p["DietPlanID"] for p in vet.get("/api/diet-plans?Status=Pending").data], [plan_id])
 
         res = vet.post(f"/api/diet-plans/{plan_id}/reject", {}, format="json")
@@ -47,7 +47,7 @@ class DietTests(TrainingTestCase):
             {"MealTime": "06:00", "FeedType": "Yến mạch", "Quantity": 2, "Unit": "kg"}]}, format="json")
         self.assertEqual(res.data["Status"], "Pending")
         self.assertEqual(len(res.data["Meals"]), 1)
-        res = vet.post(f"/api/diet-plans/{plan_id}/approve", {"VetNote": "OK"}, format="json")
+        res = head.post(f"/api/diet-plans/{plan_id}/approve", {"VetNote": "OK"}, format="json")
         self.assertEqual(res.data["Status"], "Approved")
         self.assertEqual(res.data["ReviewedByVetID"], self.vet.id)
         self.assertEqual(self.client_for(self.groom).get(f"/api/horses/{horse_id}/current-diet").data["DietPlanID"],
@@ -55,11 +55,11 @@ class DietTests(TrainingTestCase):
 
         # Khẩu phần mới được duyệt -> khẩu phần cũ Expired
         new_id = self.create_plan(horse_id)["DietPlanID"]
-        vet.post(f"/api/diet-plans/{new_id}/approve", {}, format="json")
+        head.post(f"/api/diet-plans/{new_id}/approve", {}, format="json")
         self.assertEqual(DietPlan.objects.get(pk=plan_id).status, "Expired")
-        res = vet.post(f"/api/diet-plans/{new_id}/adjust", {"VetNote": "Thêm điện giải", "Meals": MEALS},
+        res = vet.post(f"/api/diet-plans/{new_id}/adjust", {"VetNote": "Thêm điện giải"},
                        format="json")
-        self.assertEqual(res.data["Status"], "Adjusted")
+        self.assertEqual(res.data["Status"], "Approved")
         self.assertEqual(head.get(f"/api/horses/{horse_id}/current-diet").data["DietPlanID"], new_id)
         self.assertEqual(head.patch(f"/api/diet-plans/{new_id}", {"DietDescription": "x"}, format="json")
                          .data["code"], "INVALID_STATUS")
@@ -70,11 +70,11 @@ class CareTaskTests(TrainingTestCase):
         horse_id = self.approved_horse()
         head, groom = self.client_for(self.head), self.client_for(self.groom)
         at = f"{TODAY.isoformat()}T15:00:00"
-        res = head.post("/api/care-tasks", {"HorseID": horse_id, "TaskType": "Ice Leg Soak", "ScheduledAt": at},
+        res = head.post("/api/care-tasks", {"HorseID": horse_id, "TaskType": "Cleaning", "ScheduledAt": at},
                         format="json")
-        self.assertIn("GroomID", res.data)
+        self.assertIn("Note", res.data)
         res = head.post("/api/care-tasks", {"HorseID": horse_id, "GroomID": self.groom.id,
-                                            "TaskType": "Ice Leg Soak", "ScheduledAt": at, "Note": "20 phút"},
+                                            "TaskType": "Cleaning", "ScheduledAt": at, "Note": "20 phút"},
                         format="json")
         self.assertEqual(res.status_code, 201, res.data)
         task_id = res.data["CareTaskID"]
@@ -100,13 +100,16 @@ class CareTaskTests(TrainingTestCase):
         self.assertEqual(groom.post(f"/api/care-tasks/{own_id}/skip", {}, format="json").status_code, 400)
         self.assertEqual(groom.post(f"/api/care-tasks/{own_id}/skip", {"Reason": "Ngựa đi khám"}, format="json")
                          .data["Status"], "Skipped")
+        # bỏ qua việc -> Huấn luyện viên trưởng được báo, kèm lý do
+        skipped = {n["Type"]: n for n in head.get("/api/notifications").data}
+        self.assertEqual(skipped["ACT_SKIP_CARE_TASK"]["Message"], "Ngựa đi khám")
         self.assertEqual(self.client_for(self.rider).post("/api/care-tasks", {}, format="json").status_code, 403)
 
     def test_archive_skips_pending_tasks(self):
         horse_id = self.approved_horse()
         res = self.client_for(self.head).post("/api/care-tasks", {
             "HorseID": horse_id, "GroomID": self.groom.id, "TaskType": "Feeding",
-            "ScheduledAt": f"{(TODAY + timedelta(days=1)).isoformat()}T06:00:00"}, format="json")
+            "ScheduledAt": f"{(TODAY + timedelta(days=1)).isoformat()}T06:00:00", "Note": "Cho ăn theo hướng dẫn"}, format="json")
         self.client_for(self.manager).post(f"/api/horses/{horse_id}/archive", {"Reason": "Rời CLB"}, format="json")
         self.assertEqual(CareTask.objects.get(pk=res.data["CareTaskID"]).status, "Skipped")
 
@@ -132,9 +135,9 @@ class InventoryTests(TrainingTestCase):
         self.assertIn(("INVENTORY_REQUEST", req_id),
                       {(n["Type"], n["EntityID"]) for n in manager.get("/api/notifications").data})
 
-        res = manager.post(f"/api/inventory-requests/{req_id}/approve", {}, format="json")
+        res = manager.post(f"/api/inventory-requests/{req_id}/approve", {"Note": "Cấp theo yêu cầu"}, format="json")
         self.assertEqual(res.data["code"], "INSUFFICIENT_STOCK")        # băng chân chỉ còn 5
-        res = manager.post(f"/api/inventory-requests/{req_id}/approve", {"Items": [
+        res = manager.post(f"/api/inventory-requests/{req_id}/approve", {"Note": "Cấp theo tồn", "Items": [
             {"InventoryItemID": bandage["InventoryItemID"], "ApprovedQuantity": 5}]}, format="json")
         self.assertEqual(res.status_code, 200, res.data)
         self.assertEqual(res.data["Status"], "Approved")
@@ -179,11 +182,11 @@ class CareRegressionTests(TrainingTestCase):
         meals = [{"MealTime": "06:00", "FeedType": "Yến mạch", "Quantity": 3, "Unit": "kg"}]
         current = head.post(f"/api/horses/{horse_id}/diet-plans", {"StartDate": TODAY.isoformat(), "Meals": meals},
                             format="json").data["DietPlanID"]
-        vet.post(f"/api/diet-plans/{current}/approve", {}, format="json")
+        head.post(f"/api/diet-plans/{current}/approve", {}, format="json")
         future_start = TODAY + timedelta(days=30)
         future = head.post(f"/api/horses/{horse_id}/diet-plans", {"StartDate": future_start.isoformat(),
                                                                   "Meals": meals}, format="json").data["DietPlanID"]
-        vet.post(f"/api/diet-plans/{future}/approve", {}, format="json")
+        head.post(f"/api/diet-plans/{future}/approve", {}, format="json")
         self.assertEqual(head.get(f"/api/horses/{horse_id}/current-diet").data["DietPlanID"], current)
         plan = DietPlan.objects.get(pk=current)
         self.assertEqual((plan.status, plan.end_date), ("Approved", future_start - timedelta(days=1)))
@@ -204,3 +207,34 @@ class SeedCareTests(TestCase):
         self.assertEqual(InventoryItem.objects.get(item_name="Muối khoáng").status, "Low Stock")
         call_command("seed_demo", f"--password={secrets.token_urlsafe(18)}", stdout=StringIO())
         self.assertEqual(InventoryItem.objects.count(), 5)
+
+
+class CareTaskStallTests(TrainingTestCase):
+    def test_task_shows_current_stall(self):
+        """Việc chăm sóc kèm số chuồng hiện tại của ngựa (trước đây luôn hiện "Chưa xếp")."""
+        horse_id = self.owner_creates_horse()
+        self.submit_and_verify(horse_id)
+        self.vet_signs_initial_exam(horse_id)
+        res = self.client_for(self.manager).post(f"/api/horses/{horse_id}/approve",
+                                                 {"StallID": self.stall.id, "GroomID": self.groom.id}, format="json")
+        self.assertEqual(res.status_code, 200, res.data)
+        tasks = self.client_for(self.groom).get(f"/api/care-tasks?mine=1&Date={TODAY.isoformat()}").data
+        self.assertTrue(tasks)
+        self.assertEqual({t["StallNumber"] for t in tasks}, {self.stall.stall_number})
+
+
+class GroomTrainingTodayTests(TrainingTestCase):
+    """CS01: người chăm sóc xem lịch tập hôm nay của ngựa mình phụ trách."""
+
+    def test_only_my_horses(self):
+        from apps.care.models import HorseGroom
+
+        horse_id, _, stage_id = self.ready_horse()
+        self.session(stage_id)
+        HorseGroom.objects.filter(horse_id=horse_id).delete()
+        groom = self.client_for(self.groom)
+        self.assertEqual(groom.get("/api/care/training-today").data, [])
+        HorseGroom.objects.create(horse_id=horse_id, groom=self.groom)
+        rows = groom.get("/api/care/training-today").data
+        self.assertEqual([(r["HorseID"], r["WorkRiderName"]) for r in rows], [(horse_id, self.rider.full_name)])
+        self.assertEqual(self.client_for(self.head).get("/api/care/training-today").data[0]["HorseID"], horse_id)

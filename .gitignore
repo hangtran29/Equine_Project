@@ -14,7 +14,11 @@ htmlcov/
 
 # IDE / OS
 .idea/
-.vscode/
+.vscode/*
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/settings.json
+!.vscode/extensions.json
 .vs/
 .DS_Store
 Thumbs.db
@@ -24,3 +28,7 @@ dist/
 *.log
 backend/media/
 media/
+backend/translation_cache.json
+frontend/artifacts/
+*.tsbuildinfo
+.integration-backups/

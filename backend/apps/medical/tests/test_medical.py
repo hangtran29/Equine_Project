@@ -3,6 +3,7 @@ from datetime import timedelta
 
 from django.test import TestCase
 
+from apps.care.models import HorseGroom
 from apps.horses.models import Horse
 from apps.medical.models import HealthReport, TrainingLock
 from apps.training.models import TrainingSession
@@ -16,6 +17,13 @@ class HealthReportTests(TrainingTestCase):
         today_session = self.session(stage_id)["TrainingSessionID"]
         later = self.session(stage_id, day=TODAY + timedelta(days=3), load=20)["TrainingSessionID"]
         groom, vet, trainer, head = (self.client_for(u) for u in (self.groom, self.vet, self.trainer, self.head))
+        HorseGroom.objects.update_or_create(horse_id=horse_id, defaults={"groom": self.groom})
+
+        # Người chăm sóc khác không phụ trách ngựa này thì không được báo
+        other = self.make_user("groom2@one.test", "GROOM", self.club)
+        res = self.client_for(other).post(f"/api/horses/{horse_id}/health-reports", {
+            "Severity": "Normal", "Description": "x"}, format="json")
+        self.assertEqual((res.status_code, res.data.get("code")), (404, "NOT_FOUND"), res.data)
 
         # 1. Groom báo sự cố; người sau thấy báo cáo đang mở và thêm ghi chú thay vì báo trùng
         res = groom.post(f"/api/horses/{horse_id}/health-reports", {
@@ -81,7 +89,7 @@ class HealthReportTests(TrainingTestCase):
         self.assertEqual(self.client_for(self.trainer).post(f"/api/training-locks/{lock_id}/release")
                          .status_code, 403)
         res = self.client_for(self.vet2).post(f"/api/horses/{horse_id}/medical-records", {
-            "ExamType": "Follow-up", "HealthStatus": "Healthy", "TrainingEligibility": "Eligible",
+            "ExamType": "Follow-up", "FollowUpLockID": lock_id, "HealthStatus": "Healthy", "TrainingEligibility": "Eligible",
             "Conclusion": "Hết viêm"}, format="json")
         follow_up_id = res.data["MedicalRecordID"]
         res = self.client_for(self.vet2).post(f"/api/medical-records/{follow_up_id}/sign")
@@ -189,7 +197,7 @@ class TrainingLockTests(TrainingTestCase):
                                     lock_start_date=TODAY - timedelta(days=1))
         trainer = self.client_for(self.trainer)
         res = trainer.post("/api/training-plans", {
-            "HorseID": horse_id, "StartDate": TODAY.isoformat(),
+            "HorseID": horse_id, "Goal": "Duy trì thể lực", "StartDate": TODAY.isoformat(),
             "Stages": [{"StageName": "A", "StartDate": TODAY.isoformat()}]}, format="json")
         plan_id = res.data["TrainingPlanID"]
         trainer.post(f"/api/training-plans/{plan_id}/submit")
@@ -263,6 +271,7 @@ class MedicalRegressionTests(TrainingTestCase):
     def test_delete_draft_linked_to_report_and_treatment(self):
         horse_id = self.approved_horse()
         vet = self.client_for(self.vet)
+        HorseGroom.objects.update_or_create(horse_id=horse_id, defaults={"groom": self.groom})
         report = self.client_for(self.groom).post(f"/api/horses/{horse_id}/health-reports",
                                                   {"Description": "Bỏ ăn"}, format="json").data
         record = vet.post(f"/api/horses/{horse_id}/medical-records",
@@ -278,9 +287,9 @@ class MedicalRegressionTests(TrainingTestCase):
         self.assertEqual(res.status_code, 201, res.data)
         res = self.client_for(self.vet2).post(f"/api/horses/{horse_id}/medical-records", {
             "ExamType": "Routine Exam", "HealthReportID": report["HealthReportID"]}, format="json")
-        self.assertEqual(res.data["code"], "REPORT_ALREADY_LINKED")
+        self.assertEqual(res.data["code"], "NOT_REPORT_VET")
 
-    def test_signed_treatment_only_end_dates(self):
+    def test_signed_treatment_is_immutable(self):
         horse_id = self.approved_horse()
         vet = self.client_for(self.vet)
         record = vet.post(f"/api/horses/{horse_id}/medical-records", {
@@ -299,7 +308,7 @@ class MedicalRegressionTests(TrainingTestCase):
                          .data["code"], "RECORD_SIGNED")
         res = other.patch(f"/api/treatments/{treatment['TreatmentID']}",
                           {"EndDate": (TODAY + timedelta(days=3)).isoformat()}, format="json")
-        self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual(res.status_code, 409, res.data)
 
     def test_release_needs_exam_after_lock_even_if_backdated(self):
         horse_id = self.approved_horse()

@@ -1,48 +1,33 @@
+"""Reconcile future Pending work; retain completed, skipped and past history.
+
+Missing assignments are stored as GroomID=NULL. Ice soaking requires a Vet
+order; a training lock alone never prescribes it. Also called by the worker.
 """
-Việc chăm sóc TỰ SINH theo chỉ tiêu (Groom không tự tạo việc).
-
-Chỉ tiêu của mỗi CLB (bảng CareTaskRule, Head Trainer / Manager bật / tắt, đổi giờ):
-  FEEDING_BY_DIET       Cho ăn  : mỗi bữa trong khẩu phần đang áp dụng (Approved / Adjusted), đúng giờ bữa ăn.
-  DAILY_CLEANING        Dọn chuồng: mỗi ngày, lúc TimeOfDay (mặc định 07:30).
-  BATH_AFTER_TRAINING   Tắm, kiểm tra chân: sau mỗi buổi tập đã xong trong ngày, EndTime + OffsetMinutes (30 phút).
-  ICE_SOAK_WHEN_LOCKED  Ngâm chân nước đá: mỗi ngày ngựa đang bị Vet khóa tập (Flow 3), lúc TimeOfDay (16:00).
-Chỉ sinh cho ngựa Approved, từ hôm nay đến tối đa 7 ngày tới (không sinh việc cho ngày đã qua).
-
-Giao cho ai: Groom phụ trách ngựa (HorseGroom); ngựa chưa có Groom phụ trách -> Groom đang hoạt động ít việc nhất ngày đó.
-Không sinh trùng: mỗi việc có SourceKey (vd "FEEDING_BY_DIET:2026-10-20:15" = bữa ăn 15 của ngày 20/10).
-Nguồn thay đổi (khẩu phần mới, tắt chỉ tiêu, hết khóa tập...) -> việc tự sinh CHƯA LÀM, CHƯA TỚI GIỜ của ngày đó bị xóa.
-
-Khi nào sinh: lúc xem danh sách việc (GET /api/care-tasks), lúc Groom mở thông báo,
-POST /api/care-tasks/generate, hoặc lệnh `python manage.py generate_care_tasks`.
-"""
-from datetime import date, datetime, time, timedelta
-
-from django.utils import timezone
-
-from apps.accounts.models import User
-from apps.core import flows
+from datetime import datetime, time, timedelta
+from django.db import transaction
+from apps.accounts.models import Club
 from apps.core.audit import log_action
+from apps.core.clubtime import now, today
+from apps.core.locking import horse_serialized
 from apps.horses.models import Horse
-
-from .models import CareTask, CareTaskRule, HorseGroom
+from .models import CareTask, CareTaskRule, HorseGroom, VetCareOrder
 
 R = CareTaskRule.Code
 DEFAULT_RULES = {
     R.FEEDING_BY_DIET: ("Feeding", "Cho ăn theo khẩu phần", None, None),
     R.DAILY_CLEANING: ("Cleaning", "Dọn vệ sinh chuồng", time(7, 30), None),
     R.BATH_AFTER_TRAINING: ("Bathing", "Tắm, kiểm tra chân sau buổi tập", None, 30),
-    R.ICE_SOAK_WHEN_LOCKED: ("Ice Leg Soak", "Ngâm chân nước đá (ngựa đang bị khóa tập)", time(16, 0), None),
+    R.ICE_SOAK_WHEN_LOCKED: ("Ice Leg Soak", "Ngâm chân theo chỉ định Vet", time(16), None),
 }
 MAX_DAYS_AHEAD = 7
 
 
 def ensure_rules(club):
-    """Tạo chỉ tiêu mặc định còn thiếu cho CLB. Trả về {RuleCode: CareTaskRule}."""
-    rules = {r.rule_code: r for r in CareTaskRule.objects.filter(club=club)}
-    for code, (task_type, title, at, offset) in DEFAULT_RULES.items():
-        if code not in rules:
-            rules[code] = CareTaskRule.objects.create(club=club, rule_code=code, task_type=task_type, title=title,
-                                                      time_of_day=at, offset_minutes=offset, is_active=True)
+    rules = {}
+    for code, (kind, title, at, offset) in DEFAULT_RULES.items():
+        rules[code], _ = CareTaskRule.objects.get_or_create(club=club, rule_code=code,
+            defaults={"task_type": kind, "title": title, "time_of_day": at, "offset_minutes": offset,
+                      "is_active": code != R.ICE_SOAK_WHEN_LOCKED})
     return rules
 
 
@@ -51,132 +36,111 @@ def _combine(day, at):
 
 
 def expected_tasks(club, day, rules):
-    """Danh sách việc cần có của CLB trong ngày theo các chỉ tiêu đang bật: [(horse, rule, ScheduledAt, SourceKey, Note)]."""
     from .services import current_diet_plan
-
-    horses = list(Horse.objects.filter(club=club, registration_status=Horse.RegistrationStatus.APPROVED))
+    horses = list(Horse.objects.filter(club=club, registration_status="Approved").order_by("pk"))
     rows = []
     for horse in horses:
         rule = rules[R.FEEDING_BY_DIET]
-        if rule.is_active:
-            plan = current_diet_plan(horse, day)
-            for meal in (plan.meals.all() if plan else []):
-                rows.append((horse, rule, _combine(day, meal.meal_time), f"{rule.rule_code}:{day}:{meal.id}",
-                             f"{rule.title}: {meal.feed_type} {format(meal.quantity.normalize(), 'f')} {meal.unit}"
-                             + (f" ({meal.note})" if meal.note else "")))
+        plan = current_diet_plan(horse, day) if rule.is_active else None
+        for meal in plan.meals.all() if plan else []:
+            rows.append((horse, rule, _combine(day, meal.meal_time), f"{rule.rule_code}:{day}:{meal.pk}",
+                         f"{rule.title}: {meal.feed_type} {format(meal.quantity.normalize(), 'f')} {meal.unit}" + (f" ({meal.note})" if meal.note else ""), {"diet_meal": meal}))
         rule = rules[R.DAILY_CLEANING]
         if rule.is_active:
-            rows.append((horse, rule, _combine(day, rule.time_of_day or time(7, 30)), f"{rule.rule_code}:{day}:",
-                         rule.title))
+            rows.append((horse, rule, _combine(day, rule.time_of_day or time(7, 30)), f"{rule.rule_code}:{day}:", rule.title, {}))
     rule = rules[R.BATH_AFTER_TRAINING]
-    if rule.is_active and flows.has_training() and day <= date.today():
+    if rule.is_active:
         from apps.training.models import TrainingSession
-
-        for session in TrainingSession.objects.filter(stage__plan__assignment__horse__in=horses, session_date=day,
-                                                      status="Completed").select_related("stage__plan__assignment"):
-            end = session.end_time or session.start_time
-            # buổi tập xong muộn (vd 23:40 + 30 phút) -> vẫn tính là việc của ngày tập, không rơi sang hôm sau
-            at = min(_combine(day, end) + timedelta(minutes=rule.offset_minutes or 0), _combine(day, time(23, 59)))
-            rows.append((session.horse, rule, at, f"{rule.rule_code}:{day}:{session.id}",
-                         f"{rule.title} ({session.training_type} lúc {session.start_time:%H:%M})"))
-    rule = rules[R.ICE_SOAK_WHEN_LOCKED]
-    if rule.is_active and flows.has_flow3():
-        from apps.medical.models import TrainingLock
-
-        for lock in TrainingLock.objects.filter(horse__in=horses, lock_status="Active").select_related("horse"):
-            if lock.covers(day):
-                rows.append((lock.horse, rule, _combine(day, rule.time_of_day or time(16, 0)),
-                             f"{rule.rule_code}:{day}:{lock.id}", f"{rule.title}: {lock.reason}"))
+        for s in TrainingSession.objects.filter(stage__plan__assignment__horse__in=horses,
+                result__recorded_at__date__in=(day, day - timedelta(days=1)), status="Completed").select_related("stage__plan__assignment", "result"):
+            at = s.result.recorded_at + timedelta(minutes=rule.offset_minutes or 0)
+            if at.date() == day:
+                rows.append((s.horse, rule, at, f"{rule.rule_code}:{s.pk}", f"{rule.title} ({s.training_type})", {}))
+    for order in VetCareOrder.objects.filter(medical_record__horse__in=horses, medical_record__record_status="Signed",
+            is_active=True, start_date__lte=day, end_date__gte=day).select_related("medical_record__horse", "training_lock"):
+        if order.training_lock_id and order.training_lock.lock_status != "Active":
+            continue
+        rows.append((order.medical_record.horse, None, _combine(day, order.time_of_day), f"VET_ORDER:{order.pk}:{day}",
+                     order.instructions, {"task_type": order.task_type, "medical_record": order.medical_record,
+                                          "training_lock": order.training_lock, "assigned_by": order.created_by}))
     return rows
 
 
 class GroomPicker:
-    """Groom phụ trách ngựa; chưa có thì chia đều cho Groom đang hoạt động ít việc nhất trong ngày."""
-
     def __init__(self, club, day):
         self.fixed = {link.horse_id: link.groom for link in HorseGroom.objects.filter(
-            horse__club=club, groom__status="Active").select_related("groom")}
-        self.grooms = list(User.objects.filter(club=club, status="Active", roles__code="GROOM").distinct())
-        loads = CareTask.objects.filter(horse__club=club, scheduled_at__date=day, status="Pending")
-        self.load = {g.id: loads.filter(groom=g).count() for g in self.grooms}
+            horse__club=club, groom__status="Active", groom__roles__code="GROOM").select_related("groom")}
 
     def pick(self, horse):
-        groom = self.fixed.get(horse.id)
-        if groom is None and self.grooms:
-            groom = min(self.grooms, key=lambda g: (self.load[g.id], g.id))
-        if groom is not None:
-            self.load[groom.id] = self.load.get(groom.id, 0) + 1
-        return groom
+        return self.fixed.get(horse.pk)
 
 
+@transaction.atomic
 def generate_for_day(club, day, user=None):
-    """Sinh việc còn thiếu / xóa việc tự sinh đã lỗi thời của 1 ngày. Trả về số việc tạo / xóa / không giao được."""
-    today = date.today()
-    if day < today or day > today + timedelta(days=MAX_DAYS_AHEAD):
+    if day < today() or day > today() + timedelta(days=MAX_DAYS_AHEAD):
         return {"Date": day, "Created": 0, "Removed": 0, "Unassigned": 0}
-    rules = ensure_rules(club)
-    expected = expected_tasks(club, day, rules)
+    Club.objects.select_for_update().get(pk=club.pk)
+    list(Horse.objects.select_for_update().filter(club=club).order_by("pk"))
+    expected = expected_tasks(club, day, ensure_rules(club))
     keys = {row[3] for row in expected}
-    day_tasks = CareTask.objects.filter(horse__club=club, scheduled_at__date=day, rule_code__isnull=False)
-    existing = set(day_tasks.values_list("source_key", flat=True))
-    stale = day_tasks.filter(status="Pending", scheduled_at__gte=timezone.now().replace(tzinfo=None)) \
-        .exclude(source_key__in=keys)
+    tasks = CareTask.objects.filter(horse__club=club, scheduled_at__date=day, source_key__isnull=False)
+    stale = tasks.filter(status="Pending", scheduled_at__gt=now()).exclude(source_key__in=keys)
     removed = stale.count()
-    stale.delete()
-    picker, created, unassigned = GroomPicker(club, day), [], 0
-    for horse, rule, at, key, note in expected:
-        if key in existing:
-            continue
-        groom = picker.pick(horse)
-        if groom is None:
-            unassigned += 1
-            continue
-        created.append(CareTask(horse=horse, groom=groom, assigned_by=None, task_type=rule.task_type,
-                                scheduled_at=at, status="Pending", note=note[:1000], rule_code=rule.rule_code,
-                                source_key=key))
-    CareTask.objects.bulk_create(created)
-    if user is not None and (created or removed):
-        log_action(user, "GENERATE_CARE_TASKS", club, {"Date": str(day), "Created": len(created), "Removed": removed})
-    return {"Date": day, "Created": len(created), "Removed": removed, "Unassigned": unassigned}
+    for task in stale:
+        task.status = "Skipped"
+        task.outcome_note = "Nguồn thay đổi; hủy trước giờ thực hiện."
+        task.save(update_fields=["status", "outcome_note"])
+        log_action(user, "SUPERSEDE_CARE_TASK", task)
+    picker, created = GroomPicker(club, day), 0
+    for horse, rule, at, key, note, extra in expected:
+        defaults = {"groom": picker.pick(horse), "task_type": rule.task_type if rule else extra["task_type"],
+                    "scheduled_at": at, "note": note[:1000], "rule_code": rule.rule_code if rule else "VET_ORDER", **extra}
+        task, new = CareTask.objects.get_or_create(horse=horse, source_key=key, defaults=defaults)
+        created += int(new)
+        if not new and task.status == "Pending" and task.scheduled_at > now():
+            for attr, value in defaults.items():
+                setattr(task, attr, value)
+            task.save()
+    unassigned = CareTask.objects.filter(horse__club=club, scheduled_at__date=day, status="Pending", groom__isnull=True).count()
+    if user and (created or removed):
+        log_action(user, "GENERATE_CARE_TASKS", club, {"Date": str(day), "Created": created, "Removed": removed})
+    return {"Date": day, "Created": created, "Removed": removed, "Unassigned": unassigned}
 
 
 def generate_range(club, start, days=1, user=None):
-    return [generate_for_day(club, start + timedelta(days=i), user) for i in range(max(1, days))]
+    return [generate_for_day(club, start + timedelta(days=i), user) for i in range(min(MAX_DAYS_AHEAD + 1, max(1, days)))]
 
 
+@horse_serialized
 def set_horse_groom(horse, groom, user):
-    link = HorseGroom.objects.filter(horse=horse).first()
-    if link is None:
-        link = HorseGroom.objects.create(horse=horse, groom=groom, assigned_by=user, assigned_at=timezone.now())
-    else:
-        link.groom, link.assigned_by, link.assigned_at = groom, user, timezone.now()
-        link.save()
-    # việc tự sinh chưa làm của ngựa (từ giờ trở đi) chuyển cho Groom mới
-    moved = CareTask.objects.filter(horse=horse, status="Pending", rule_code__isnull=False,
-                                    scheduled_at__gte=timezone.now().replace(tzinfo=None)).exclude(groom=groom) \
-        .update(groom=groom)
-    log_action(user, "SET_HORSE_GROOM", horse, {"GroomID": groom.id, "MovedTaskCount": moved})
-    return link, moved
+    old = HorseGroom.objects.filter(horse=horse).first()
+    previous = old.groom_id if old else None
+    link, _ = HorseGroom.objects.update_or_create(horse=horse, defaults={"groom": groom, "assigned_by": user, "assigned_at": now()})
+    pending = CareTask.objects.filter(horse=horse, status="Pending").exclude(groom=groom)
+    ids = list(pending.values_list("pk", flat=True))
+    pending.update(groom=groom)
+    log_action(user, "SET_HORSE_GROOM", horse, {"PreviousGroomID": previous, "GroomID": groom.pk, "MovedTaskIDs": ids})
+    return link, len(ids)
 
 
+@horse_serialized
 def clear_horse_groom(horse, user):
-    deleted, _ = HorseGroom.objects.filter(horse=horse).delete()
-    if deleted:
-        log_action(user, "CLEAR_HORSE_GROOM", horse)
-    return bool(deleted)
+    link = HorseGroom.objects.filter(horse=horse).first()
+    previous = link.groom_id if link else None
+    ids = list(CareTask.objects.filter(horse=horse, status="Pending").values_list("pk", flat=True))
+    CareTask.objects.filter(pk__in=ids).update(groom=None)
+    HorseGroom.objects.filter(horse=horse).delete()
+    log_action(user, "CLEAR_HORSE_GROOM", horse, {"PreviousGroomID": previous, "MovedTaskIDs": ids})
+    return bool(link)
 
 
+@transaction.atomic
 def update_rule(rule, user, values):
+    Club.objects.select_for_update().get(pk=rule.club_id)
     for attr, value in values.items():
         setattr(rule, attr, value)
-    rule.updated_by, rule.updated_at = user, timezone.now()
+    rule.updated_by, rule.updated_at = user, now()
     rule.save()
     log_action(user, "UPDATE_CARE_RULE", rule, {k: str(v) for k, v in values.items()})
-    # áp dụng ngay: hôm nay và các ngày tới đã có việc tự sinh
-    today = date.today()
-    days = set(CareTask.objects.filter(horse__club=rule.club, rule_code__isnull=False, scheduled_at__date__gt=today,
-                                       scheduled_at__date__lte=today + timedelta(days=MAX_DAYS_AHEAD))
-               .values_list("scheduled_at__date", flat=True))
-    for day in sorted({today, *days}):
-        generate_for_day(rule.club, day, user)
+    generate_range(rule.club, today(), MAX_DAYS_AHEAD + 1, user)
     return rule

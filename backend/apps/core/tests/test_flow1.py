@@ -20,9 +20,9 @@ class HappyPathTests(Flow1TestCase):
         self.assertEqual(horse["Owner"]["Email"], "owner@one.test")
 
         # 2. Owner sửa nháp rồi gửi
-        res = owner.patch(f"/api/horses/{horse_id}", {"CoatColor": "Dark Bay"}, format="json")
+        res = owner.patch(f"/api/horses/{horse_id}", {"CoatColor": "Nâu sẫm"}, format="json")
         self.assertEqual(res.status_code, 200, res.data)
-        self.assertEqual(res.data["CoatColor"], "Dark Bay")
+        self.assertEqual(res.data["CoatColor"], "Nâu sẫm")
         res = owner.post(f"/api/horses/{horse_id}/submit")
         self.assertEqual(res.data["RegistrationStatus"], "Submitted")
 
@@ -108,7 +108,7 @@ class HappyPathTests(Flow1TestCase):
     def test_manager_create_requires_owner(self):
         res = self.client_for(self.manager).post("/api/horses", self.horse_payload(), format="json")
         self.assertEqual(res.status_code, 400)
-        self.assertIn("OwnerID", res.data)
+        self.assertIn("OwnerEmail", res.data)          # khai giúp: phải nhập thông tin chủ ngựa
         res = self.client_for(self.manager).post("/api/horses", self.horse_payload(OwnerID=self.vet.id),
                                                  format="json")
         self.assertEqual(res.status_code, 400)
@@ -157,30 +157,62 @@ class RuleTests(Flow1TestCase):
         payload = self.horse_payload(ClubID=self.club.id)
         del payload["Breed"]
         res = owner.post("/api/horses", payload, format="json")
-        self.assertEqual(res.data["Breed"], ["Cần nhập giống ngựa (Breed)."])
+        self.assertEqual(res.data["Breed"], ["Vui lòng nhập thông tin này."])
         horse_id = self.owner_creates_horse()
         res = owner.patch(f"/api/horses/{horse_id}", {"PassportNumber": None}, format="json")
         self.assertEqual(res.status_code, 400)
+        # ngựa chưa được cấp hộ chiếu: đánh dấu NoPassport thì được để trống
+        res = owner.patch(f"/api/horses/{horse_id}", {"NoPassport": True}, format="json")
+        self.assertEqual((res.status_code, res.data["PassportNumber"]), (200, None))
 
     def test_microchip_and_passport_format(self):
         owner = self.client_for(self.owner)
-        for bad in ("abc", "98500000000000", "9850000000000011", "98500000000000A"):
+        cases = {
+            "": "Vui lòng nhập thông tin này.",
+            "98500000000000": "Mã chưa đủ số ký tự theo quy định.",
+            "9850000000000011": "Mã vượt quá số ký tự cho phép.",
+            "98500000000000A": "Chỉ được sử dụng các ký tự theo quy định.",
+            "985 000 000 000 009": "Chỉ được sử dụng các ký tự theo quy định.",
+            "123000000000001": "Mã phải bắt đầu bằng tiền tố được cấp.",
+        }
+        for bad, message in cases.items():
             res = owner.post("/api/horses", self.horse_payload(ClubID=self.club.id, MicrochipNumber=bad,
-                                                               PassportNumber="VN-777"), format="json")
-            self.assertEqual(res.status_code, 400, bad)
-            self.assertIn("15 chữ số", res.data["MicrochipNumber"][0])
-        for bad in ("abc", "VN 001", "VN_0001", "#12345"):
-            res = owner.post("/api/horses", self.horse_payload(ClubID=self.club.id, PassportNumber=bad),
-                             format="json")
-            self.assertEqual(res.status_code, 400, bad)
-            self.assertIn("PassportNumber", res.data)
-        res = owner.post("/api/horses", self.horse_payload(ClubID=self.club.id, MicrochipNumber="985 000 000 000 009",
-                                                           PassportNumber="vn-tb-2021/9"), format="json")
+                                                               PassportNumber="704001000000777"), format="json")
+            self.assertEqual(res.data["MicrochipNumber"], [message], bad)
+        cases = {
+            "704001": "Mã chưa đủ số ký tự theo quy định.",
+            "7040010000000001": "Mã vượt quá số ký tự cho phép.",
+            "704-01000000001": "Chỉ được sử dụng các ký tự theo quy định.",
+            "VNM001000000001": "Mã không đúng cấu trúc quy định.",
+            "999001000000001": "Mã phải bắt đầu bằng tiền tố được cấp.",
+        }
+        for bad, message in cases.items():
+            res = owner.post("/api/horses", self.horse_payload(ClubID=self.club.id, PassportNumber=bad), format="json")
+            self.assertEqual(res.data["PassportNumber"], [message], bad)
+        res = owner.post("/api/horses", self.horse_payload(ClubID=self.club.id, MicrochipNumber="704000000000009",
+                                                           PassportNumber="704vnf000000009"), format="json")
         self.assertEqual(res.status_code, 201, res.data)
-        self.assertEqual((res.data["MicrochipNumber"], res.data["PassportNumber"]), ("985000000000009", "VN-TB-2021/9"))
-        res = owner.post("/api/horses", self.horse_payload(ClubID=self.club.id, MicrochipNumber="985000000000010",
-                                                           PassportNumber="VN-TB-2021/9"), format="json")
-        self.assertEqual(res.data["PassportNumber"], ["Số hộ chiếu / đăng ký đã được dùng cho một ngựa khác."])
+        self.assertEqual((res.data["MicrochipNumber"], res.data["PassportNumber"]), ("704000000000009", "704VNF000000009"))
+        res = owner.post("/api/horses", self.horse_payload(ClubID=self.club.id, MicrochipNumber="704000000000009",
+                                                           PassportNumber="704VNF000000009"), format="json")
+        self.assertEqual(res.data["MicrochipNumber"], ["Mã này đã được sử dụng trong hệ thống."])
+        self.assertEqual(res.data["PassportNumber"], ["Mã này đã được sử dụng trong hệ thống."])
+        res = owner.post("/api/horses", self.horse_payload(ClubID=self.club.id, MicrochipNumber="985000000000011",
+                                                           PassportNumber="", NoPassport=True), format="json")
+        self.assertEqual((res.status_code, res.data["PassportNumber"]), (201, None))
+
+    def test_name_and_catalog_rules(self):
+        owner = self.client_for(self.owner)
+        res = owner.post("/api/horses", self.horse_payload(ClubID=self.club.id, HorseName="   ", Breed="12345",
+                                                           CoatColor="", SireName="12345", DamName="@@@"),
+                         format="json")
+        self.assertEqual(res.data["HorseName"], ["Nội dung không được chỉ chứa khoảng trắng."])
+        self.assertEqual(res.data["Breed"], ["Giống ngựa phải có chữ cái, không chỉ gồm chữ số hoặc ký tự đặc biệt."])
+        self.assertEqual(res.data["CoatColor"], ["Vui lòng chọn hoặc nhập màu lông."])
+        self.assertIn("Tên ngựa bố phải có chữ cái", res.data["SireName"][0])
+        self.assertIn("Tên ngựa mẹ phải có chữ cái", res.data["DamName"][0])
+        res = owner.post("/api/horses", self.horse_payload(ClubID=self.club.id, HorseName="A" * 101), format="json")
+        self.assertEqual(res.data["HorseName"], ["Tên ngựa vượt quá 100 ký tự cho phép."])
 
     def test_pedigree_rules(self):
         owner = self.client_for(self.owner)
@@ -196,7 +228,7 @@ class RuleTests(Flow1TestCase):
         owner = self.client_for(self.owner)
         res = owner.post("/api/horses", self.horse_payload(ClubID=self.club.id, Gender="Unknown"), format="json")
         self.assertEqual(res.status_code, 400)
-        self.assertEqual(res.data["Gender"], ["Giới tính phải là Male (đực), Female (cái) hoặc Gelding (đực đã thiến)."])
+        self.assertEqual(res.data["Gender"], ["Lựa chọn không có trong danh mục."])
         res = owner.post("/api/horses", self.horse_payload(ClubID=self.club.id, DateOfBirth="2999-01-01"),
                          format="json")
         self.assertIn("DateOfBirth", res.data)
@@ -303,7 +335,7 @@ class PermissionTests(Flow1TestCase):
         self.assertEqual(vet.post(f"/api/horses/{horse_id}/verify").status_code, 403)
         self.assertEqual(trainer.post("/api/horses", self.horse_payload(), format="json").status_code, 403)
         self.assertEqual(owner.get("/api/vet/pending-initial-exams").status_code, 403)
-        self.assertEqual(trainer.get(f"/api/horses/{horse_id}").status_code, 200)   # nhân sự CLB xem được
+        self.assertEqual(trainer.get(f"/api/horses/{horse_id}").status_code, 404)   # nhân sự CLB xem được
 
     def test_owner_sees_only_own_horses(self):
         horse_id = self.owner_creates_horse()

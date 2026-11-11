@@ -8,7 +8,7 @@ from django.test import SimpleTestCase
 
 from apps.training.models import TrainingSession
 
-from .base import TODAY, TrainingTestCase
+from .base import TODAY, TrainingTestCase, result_body
 
 
 class AssignmentTests(TrainingTestCase):
@@ -99,8 +99,8 @@ class PlanTests(TrainingTestCase):
         self.assign(horse_id)
         trainer, head = self.client_for(self.trainer), self.client_for(self.head)
         res = self.client_for(self.trainer2).post("/api/training-plans", {
-            "HorseID": horse_id, "StartDate": TODAY.isoformat()}, format="json")
-        self.assertEqual(res.data["code"], "NOT_PLAN_OWNER")
+            "HorseID": horse_id, "Goal": "Tăng sức bền", "StartDate": TODAY.isoformat()}, format="json")
+        self.assertEqual(res.data["code"], "NOT_FOUND")
 
         res = trainer.post("/api/training-plans", {"HorseID": horse_id, "Goal": "G", "StartDate": TODAY.isoformat(),
                                                    "EndDate": (TODAY + timedelta(days=30)).isoformat()}, format="json")
@@ -170,8 +170,8 @@ class SessionTests(TrainingTestCase):
                          "INVALID_STATUS")
         self.assertEqual(rider.post(f"/api/training-sessions/{sid}/start").data["Status"], "In Progress")
         res = rider.post(f"/api/training-sessions/{sid}/result", {
-            "ActualDurationMinutes": 44, "ActualDistanceKm": 3.4, "AvgSpeedKmh": 28.5, "AvgHeartRate": 150,
-            "MaxHeartRate": 190, "RecoveryMinutes": 12, "PerformanceScore": 78,
+            "ActualDurationMinutes": 44, "ActualDistanceKm": 3.4, "AvgSpeedKmh": 28.5, "MaxSpeedKmh": 41,
+            "AvgHeartRate": 150, "MaxHeartRate": 190, "RecoveryMinutes": 12, "PerformanceScore": 78,
             "RiderObservation": "Ngựa hơi nặng chân phải cuối buổi"}, format="json")
         self.assertEqual(res.status_code, 200, res.data)
         self.assertEqual(res.data["Status"], "Completed")
@@ -213,7 +213,7 @@ class SessionTests(TrainingTestCase):
                        {"SubstituteObservation": "Ngựa chạy đều, hơi lệch nhịp vòng cuối"}, format="json")
         self.assertEqual(res.status_code, 200, res.data)
         res = self.client_for(self.rider).post(f"/api/training-sessions/{sid}/result",
-                                               {"RiderObservation": "Tốt"}, format="json")
+                                               result_body(RiderObservation="Tốt"), format="json")
         self.assertEqual(res.data["Result"]["SubstituteObservation"], "Ngựa chạy đều, hơi lệch nhịp vòng cuối")
         self.assertEqual(res.data["Result"]["RiderObservation"], "Tốt")
         self.assertEqual(self.client_for(self.trainer).post(f"/api/training-sessions/{sid}/substitute-observation",
@@ -249,6 +249,11 @@ class SessionTests(TrainingTestCase):
                                                  {"Reason": "Ngựa đi lệch chân trước"}, format="json")
         self.assertEqual(res.status_code, 200, res.data)
         self.assertEqual(res.data["Status"], "Cancelled")
+        # dừng buổi -> kỵ sĩ và Huấn luyện viên trưởng được báo khẩn (người dừng thì không)
+        for user in (self.rider, self.head):
+            note = {n["Type"]: n for n in self.client_for(user).get("/api/notifications").data}["ACT_STOP_TRAINING_SESSION"]
+            self.assertEqual((note["Priority"], note["Message"]), ("High", "Ngựa đi lệch chân trước"))
+        self.assertNotIn("ACT_STOP_TRAINING_SESSION", {n["Type"] for n in self.client_for(self.trainer).get("/api/notifications").data})
 
         other = self.session(stage_id)["TrainingSessionID"]
         self.assertEqual(self.client_for(self.head).post(f"/api/training-sessions/{other}/missed").data["Status"],
@@ -290,7 +295,7 @@ class TrainingRegressionTests(TrainingTestCase):
         sid = self.session(stage_id)["TrainingSessionID"]
         rider = self.client_for(self.rider)
         rider.post(f"/api/training-sessions/{sid}/start")
-        rider.post(f"/api/training-sessions/{sid}/result", {"PerformanceScore": 70}, format="json")
+        rider.post(f"/api/training-sessions/{sid}/result", result_body(PerformanceScore=70), format="json")
         assignment = plan["TrainerHorseAssignmentID"]
         self.client_for(self.head).post(f"/api/trainer-assignments/{assignment}/end", {}, format="json")
         res = self.client_for(self.trainer).post(f"/api/training-sessions/{sid}/review", {"Evaluation": "Good"},
@@ -310,3 +315,38 @@ class SpecializationSeedMatchesSqlTests(SimpleTestCase):
         sql = Path(settings.SQL_SCRIPT).read_text(encoding="utf-8")
         block = sql.split("INSERT INTO dbo.Specialization ")[1].split("GO")[0]
         self.assertEqual(dict(re.findall(r"\('([A-Z_]+)',\s*N'([^']+)'", block)), SPECIALIZATIONS)
+
+
+class ResultRulesTests(TrainingTestCase):
+    """KS03, KS03b, KS04: ô bắt buộc, kiểm tra giá trị, kết thúc sớm phải ghi lý do."""
+
+    def started(self):
+        _, _, stage_id = self.ready_horse()
+        sid = self.session(stage_id)["TrainingSessionID"]
+        rider = self.client_for(self.rider)
+        rider.post(f"/api/training-sessions/{sid}/start")
+        return sid, rider
+
+    def test_required_and_ranges(self):
+        sid, rider = self.started()
+        res = rider.post(f"/api/training-sessions/{sid}/result", {"RiderObservation": "   "}, format="json")
+        self.assertEqual(res.data["ActualDurationMinutes"], ["Vui lòng nhập thông tin này."])
+        self.assertEqual(res.data["RiderObservation"], ["Nội dung không được chỉ chứa khoảng trắng."])
+        res = rider.post(f"/api/training-sessions/{sid}/result", result_body(PerformanceScore=120, MaxSpeedKmh=20),
+                         format="json")
+        self.assertEqual(res.data["PerformanceScore"], ["Điểm từ 0 đến 100."])
+        self.assertEqual(res.data["MaxSpeedKmh"], ["Tốc độ tối đa không được nhỏ hơn tốc độ trung bình."])
+        res = rider.post(f"/api/training-sessions/{sid}/result", result_body(AvgSpeedKmh="abc"), format="json")
+        self.assertEqual(res.data["AvgSpeedKmh"], ["Giá trị phải là số."])
+
+    def test_early_end_needs_reason(self):
+        sid, rider = self.started()
+        res = rider.post(f"/api/training-sessions/{sid}/result", result_body(ActualDurationMinutes=28), format="json")
+        self.assertEqual(res.data["EarlyEndReason"], ["Vui lòng chọn thông tin này."])
+        self.assertEqual(res.data["EarlyEndNote"], ["Vui lòng nhập thông tin này."])
+        self.assertEqual(res.data["EndTime"], ["Vui lòng nhập thông tin này."])
+        res = rider.post(f"/api/training-sessions/{sid}/result", result_body(
+            ActualDurationMinutes=28, EarlyEndReason="Fatigue", EarlyEndNote="Ngựa thở gấp sau 3 km",
+            EndTime="06:30"), format="json")
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual((res.data["Result"]["EarlyEndReason"], res.data["EndTime"]), ("Fatigue", "06:30:00"))

@@ -40,7 +40,9 @@ def owner_plans(horse):
 
 def visible_sessions(queryset, today=None):
     today = today or date.today()
-    return (queryset.filter(Q(status=S.COMPLETED, reviews__isnull=False)
+    # Chủ ngựa thấy buổi đã tập xong ngay (kể cả chưa đánh giá: "Chờ huấn luyện viên đánh giá"),
+    # số liệu chỉ hiện sau khi huấn luyện viên đánh giá (session_overview).
+    return (queryset.filter(Q(status=S.COMPLETED)
                             | Q(status__in=(S.CANCELLED, S.MISSED), session_date__lte=today))
             .filter(stage__plan__approved_at__isnull=False)
             .select_related(*SESSION_RELATED).prefetch_related("reviews__trainer").distinct()
@@ -80,7 +82,7 @@ def _result(session):
 def session_overview(session, reasons):
     review, result = _review(session), _result(session)
     action, reason = reasons.get(session.id, (None, None))
-    has_numbers = session.status == S.COMPLETED and result is not None
+    has_numbers = session.status == S.COMPLETED and result is not None and review is not None
     return {
         "TrainingSessionID": session.id,
         "SessionDate": session.session_date,
@@ -95,6 +97,7 @@ def session_overview(session, reasons):
         "PerformanceScore": _num(result.performance_score) if has_numbers else None,
         "Evaluation": review.evaluation if review else None,
         "IsStopped": action == "STOP_TRAINING_SESSION",
+        "AwaitingReview": session.status == S.COMPLETED and review is None,
         "Reason": reason if session.status != S.COMPLETED else None,
     }
 
@@ -102,7 +105,7 @@ def session_overview(session, reasons):
 def session_detail(session, reasons):
     body = session_overview(session, reasons)
     review, result = _review(session), _result(session)
-    has_numbers = session.status == S.COMPLETED and result is not None
+    has_numbers = session.status == S.COMPLETED and result is not None and review is not None
     body.update({
         "HorseID": session.horse.id,
         "HorseName": session.horse.horse_name,
@@ -276,6 +279,8 @@ def plan_header(plan, today=None):
         "ProgressPercent": plan_progress(plan, today),
         "StageCount": len(plan.stages.all()),
         "CurrentStageName": current.stage_name if current else None,
+        "CurrentStageOrder": current.stage_order if current else None,
+        "OverallIntensity": plan.overall_intensity,
     }
 
 

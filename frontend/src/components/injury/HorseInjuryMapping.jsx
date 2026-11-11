@@ -6,7 +6,6 @@ import { useVetResource } from '../../pages/vet/useVetResource.js'
 import useClinicalWarning from '../../pages/vet/useClinicalWarning.js'
 import HorseInjuryRegionPicker from './HorseInjuryRegionPicker.jsx'
 import TrainingRestrictionAlert from './TrainingRestrictionAlert.jsx'
-import PersistentInjuryMarkers from './PersistentInjuryMarkers.jsx'
 import './HorseInjuryMapping.css'
 
 export default function HorseInjuryMapping(props) {
@@ -23,7 +22,7 @@ function InjuryMappingWorkspace({ horse, records, currentUser, lockRevision = 0,
   return <div className="horse-injury-mapping">
     <header className="injury-page-heading"><div><p className="injury-eyebrow">THEO DÕI CHẤN THƯƠNG & PHỤC HỒI</p><h2>Sơ đồ chấn thương</h2><p>{horse.name} · Chọn vị trí trong từng bệnh án.</p></div></header>
     <TrainingRestrictionAlert data={locks} latest={latestSigned(records, horse.id)} horse={horse} />
-    <div className="injury-mode-note" role="note"><strong>Vùng chọn và vị trí chi tiết</strong><span>Vùng chọn được lưu cùng bệnh án. Các dấu chấn thương bên dưới lưu vị trí và lịch sử phục hồi theo từng lần khám.</span></div>
+    <div className="injury-mode-note" role="note"><strong>Chọn vùng chấn thương</strong><span>Vùng chọn và mô tả được lưu cùng bệnh án. Theo dõi phục hồi qua phiếu tái khám.</span></div>
     <section className="injury-card">
       <header className="injury-card-heading"><div><h3>Chọn bệnh án</h3><p>Chỉ bác sĩ lập phiếu được sửa phiếu nháp. Bệnh án đã chốt chỉ xem.</p></div></header>
       <div className="injury-record-selector" role="group" aria-label="Bệnh án để xem vị trí">{records.map(record => <button type="button" key={record.id} data-injury-record={record.id} aria-pressed={selectedId === record.id}
@@ -32,7 +31,6 @@ function InjuryMappingWorkspace({ horse, records, currentUser, lockRevision = 0,
       {currentUser.permissions.includes('MEDICAL_MANAGE') && horse.profileStatus === 'APPROVED' && <p className="injury-record-empty"><Link to={`/vet/horses/${horse.id}/examination?new=1`}>Lập phiếu khám mới</Link></p>}
     </section>
     <section className="injury-card injury-records"><header className="injury-card-heading"><h3>Vị trí đã ghi trong bệnh án</h3></header><ul>{records.filter(record => record.injuryLocation).map(record => <li key={record.id}><div><h4>{record.injuryLocation}</h4><p>{record.diagnosis}</p><small>{record.vetName} · {vetDateTime(record.examDate)}</small></div><Link to={`?tab=history&record=${encodeURIComponent(record.id)}`}>Xem bệnh án #{record.id}</Link></li>)}</ul></section>
-    <PersistentInjuryMarkers horse={horse} records={records} currentUser={currentUser} />
   </div>
 }
 

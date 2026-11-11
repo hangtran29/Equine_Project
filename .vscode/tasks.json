@@ -1,0 +1,38 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "EquiTrack: Backend",
+      "type": "process",
+      "command": "${workspaceFolder}/backend/.venv/Scripts/python.exe",
+      "args": ["-X", "utf8", "manage.py", "runserver", "127.0.0.1:8000"],
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "problemMatcher": [],
+      "presentation": { "panel": "dedicated" }
+    },
+    {
+      "label": "EquiTrack: Frontend",
+      "type": "shell",
+      "command": "npm.cmd",
+      "args": ["run", "dev", "--", "--host", "127.0.0.1"],
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "problemMatcher": [],
+      "presentation": { "panel": "dedicated" }
+    },
+    {
+      "label": "EquiTrack: Start app",
+      "dependsOn": ["EquiTrack: Backend", "EquiTrack: Frontend"],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    },
+    {
+      "label": "EquiTrack: Operations worker",
+      "type": "process",
+      "command": "${workspaceFolder}/backend/.venv/Scripts/python.exe",
+      "args": ["-X", "utf8", "manage.py", "run_operations", "--interval", "60"],
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "problemMatcher": [],
+      "presentation": { "panel": "dedicated" }
+    }
+  ]
+}

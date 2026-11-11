@@ -2,6 +2,7 @@ from pathlib import Path
 import json
 from django.conf import settings
 from django.db import transaction
+from apps.core.access import operational_horses
 
 from django.db.models import Q
 from django.http import FileResponse
@@ -28,7 +29,7 @@ from . import documents as documents_store
 from . import services
 from .models import Horse, HorseDocument, ProfileChangeRequest, Stall
 from .serializers import (
-    ApproveSerializer, HorseCreateSerializer, HorseDetailSerializer, HorseDocumentSerializer,
+    ApproveSerializer, ArchiveSerializer, HorseCreateSerializer, HorseDraftSerializer, HorseDetailSerializer, HorseDocumentSerializer,
     HorseDocumentUploadSerializer, HorseSerializer,
     HorseWriteSerializer, ProfileChangeRequestCreateSerializer, ProfileChangeRequestSerializer, ReasonSerializer,
     RegistrationRequestSerializer, ReviewNoteSerializer, StallSerializer, StallWriteSerializer,
@@ -41,10 +42,11 @@ REVIEW = ("HORSE_REGISTER_REVIEW",)
 
 
 def horses_visible_to(user):
-    """Nhân sự thấy ngựa trong CLB của mình; chủ ngựa chỉ thấy ngựa của mình."""
+    """Nhân sự thấy ngựa trong câu lạc bộ của mình; chủ ngựa chỉ thấy ngựa của mình."""
     queryset = Horse.objects.select_related("owner", "club")
     if user.has_perm(STAFF_VIEW):
-        return queryset.filter(club_id=user.club_id)
+        from apps.core.access import operational_horses
+        return queryset.filter(pk__in=operational_horses(user))
     if user_has_any(user, *OWNER_PERMS):
         return queryset.filter(owner=user)
     return queryset.none()
@@ -55,7 +57,7 @@ def is_owner_of(user, horse) -> bool:
 
 
 def can_manage_registration(user, horse) -> bool:
-    """Owner sửa / gửi hồ sơ ngựa của mình; Manager làm cho ngựa trong CLB mình."""
+    """Owner sửa / gửi hồ sơ ngựa của mình; Quản lý câu lạc bộ làm cho ngựa trong câu lạc bộ mình."""
     if user.has_perm("HORSE_REGISTER_REVIEW") and horse.club_id == user.club_id:
         return True
     return user.has_perm("HORSE_REGISTER") and is_owner_of(user, horse)
@@ -109,24 +111,31 @@ class HorseViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Ge
     # ---------------- tạo / sửa hồ sơ ----------------
     def create(self, request):
         data = HorseCreateSerializer(data=request.data)
-        data.is_valid(raise_exception=True)
+        valid = data.is_valid()
+        intake = request.user.has_perm("HORSE_REGISTER_REVIEW") and not request.data.get("OwnerID")
+        owner_errors = services.owner_input_errors(request.data) if intake else {}
+        if not valid or owner_errors:            # báo lỗi hồ sơ ngựa và lỗi thông tin chủ ngựa cùng lúc
+            raise ValidationError({**(data.errors if not valid else {}), **owner_errors})
         values = dict(data.validated_data)
         club_id = values.pop("ClubID", None)
         owner_id = values.pop("OwnerID", None)
         user = request.user
 
+        owner_created = None
         if user.has_perm("HORSE_REGISTER_REVIEW"):
-            # Manager nhập hộ: chủ ngựa phải là tài khoản Horse Owner
-            if not owner_id:
-                raise ValidationError({"OwnerID": ["Manager tạo hồ sơ cần chọn chủ ngựa (OwnerID)."]})
-            owner = User.objects.filter(pk=owner_id, roles__code="HORSE_OWNER").first()
-            if owner is None:
-                raise ValidationError({"OwnerID": ["Không tìm thấy chủ ngựa với OwnerID này."]})
             if not user.club_id:
                 raise BusinessRuleError(
                     "Tài khoản của bạn chưa thuộc câu lạc bộ nào (ClubID trống) nên chưa tạo được ngựa.", "USER_NO_CLUB"
                 )
             club_id = user.club_id
+            if owner_id:
+                # chọn chủ ngựa có sẵn
+                owner = User.objects.filter(pk=owner_id, roles__code="HORSE_OWNER").first()
+                if owner is None:
+                    raise ValidationError({"OwnerID": ["Không tìm thấy chủ ngựa với OwnerID này."]})
+            else:
+                # Manager khai giúp (QL10): nhập tay thông tin chủ ngựa; email đã có thì gắn vào tài khoản đó
+                owner, owner_created = services.owner_from_manager_input(user, request.data)
         else:
             # Owner tự đăng ký vào một CLB đang hoạt động
             owner = user
@@ -136,14 +145,17 @@ class HorseViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Ge
         horse = Horse(club_id=club_id, owner=owner, **values)
         horse.save()
         log_action(user, "CREATE_HORSE", horse)
-        return self._detail(horse, status.HTTP_201_CREATED)
+        response = self._detail(horse, status.HTTP_201_CREATED)
+        if owner_created is not None:
+            response.data["OwnerAccount"] = owner_created
+        return response
 
     def partial_update(self, request, pk=None):
         horse = self.get_object()
         if not can_manage_registration(request.user, horse):
             raise PermissionDenied("Bạn không được sửa hồ sơ ngựa này.")
         services.ensure_editable(horse)
-        data = HorseWriteSerializer(horse, data=request.data, partial=True)
+        data = HorseDraftSerializer(horse, data=request.data, partial=True)
         data.is_valid(raise_exception=True)
         data.save()
         horse.touch()
@@ -174,15 +186,16 @@ class HorseViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Ge
         data = ApproveSerializer(data=request.data)
         data.is_valid(raise_exception=True)
         v = data.validated_data
-        horse = services.approve(self.get_object(), request.user, v["HorseCode"], v.get("StallID"),
+        horse = services.approve(self.get_object(), request.user, v.get("HorseCode"), v.get("StallID"),
                                  v.get("ManagerNote"), v.get("GroomID"))
         return self._detail(horse)
 
     @action(detail=True, methods=["post"])
     def archive(self, request, pk=None):
-        data = ReasonSerializer(data=request.data)
+        data = ArchiveSerializer(data=request.data)
         data.is_valid(raise_exception=True)
-        return self._detail(services.archive(self.get_object(), request.user, data.validated_data["Reason"]))
+        v = data.validated_data
+        return self._detail(services.archive(self.get_object(), request.user, v["Reason"], v.get("LeftDate")))
 
     @action(detail=True, methods=["get"], url_path="registration-requests")
     def registration_requests(self, request, pk=None):
@@ -211,7 +224,7 @@ class HorseViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Ge
         if not can_manage_registration(request.user, horse):
             raise PermissionDenied("Bạn không được thêm giấy tờ cho ngựa này.")
         if owner_only and horse.registration_status == Horse.RegistrationStatus.APPROVED:
-            raise BusinessRuleError("Hãy gửi tài liệu trong yêu cầu cập nhật hồ sơ để Manager duyệt.", "APPROVAL_REQUIRED")
+            raise BusinessRuleError("Hãy gửi tài liệu trong yêu cầu cập nhật hồ sơ để Quản lý câu lạc bộ duyệt.", "APPROVAL_REQUIRED")
         if horse.registration_status == Horse.RegistrationStatus.ARCHIVED:
             raise BusinessRuleError("Ngựa đã lưu trữ, không thêm giấy tờ được.", "INVALID_STATUS")
 
@@ -360,9 +373,14 @@ class StallListView(APIView):
 
     def get(self, request):
         stalls = Stall.objects.filter(club_id=request.user.club_id)
+        if not any(request.user.has_role(role) for role in ("CLUB_MANAGER", "HEAD_TRAINER", "VETERINARIAN", "GROOM")):
+            stalls = stalls.filter(assignments__status="Active",
+                                   assignments__horse__in=operational_horses(request.user)).distinct()
         if request.query_params.get("Status"):
             stalls = stalls.filter(status=request.query_params["Status"])
-        return Response(StallSerializer(stalls, many=True).data)
+        # Club infrastructure is shared; horse details still follow assignment scope.
+        visible_horse_ids = set(operational_horses(request.user).values_list("pk", flat=True))
+        return Response(StallSerializer(stalls, many=True, context={"visible_horse_ids": visible_horse_ids}).data)
 
     def post(self, request):
         data = StallWriteSerializer(data=request.data)
@@ -401,7 +419,7 @@ class MoveStallView(APIView):
 
 
 class ClubListView(APIView):
-    """GET /api/clubs - danh sách CLB đang hoạt động (công khai: trang đăng ký tài khoản / đăng ký ngựa)."""
+    """GET /api/clubs - danh sách câu lạc bộ đang hoạt động (công khai: trang đăng ký tài khoản / đăng ký ngựa)."""
 
     authentication_classes = []
     permission_classes = [AllowAny]

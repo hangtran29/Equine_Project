@@ -25,7 +25,7 @@ def training_items(user, make_item):
                 session__stage__plan__assignment__horse__club_id=club, adjustment_required=True,
                 review_date__date__gte=today - timedelta(days=14)).select_related(
                 "session__stage__plan__assignment__horse"):
-            items.append(make_item("ADJUSTMENT_REQUIRED", "Trainer đề nghị điều chỉnh giáo án", "TrainingReview",
+            items.append(make_item("ADJUSTMENT_REQUIRED", "Huấn luyện viên đề nghị điều chỉnh giáo án", "TrainingReview",
                                    review.id, review.session.stage.plan.assignment.horse, review.review_date,
                                    message=review.adjustment_note))
     if "TRAINING_PLAN_MANAGE" in perms:  # Trainer
@@ -65,7 +65,7 @@ def training_items(user, make_item):
             stages = stages.filter(plan__assignment__trainer=user, plan__assignment__status="Active")
         for stage in stages:
             items.append(make_item("STAGE_TO_CLOSE", f"Giai đoạn \"{stage.stage_name}\" đã hết hạn, cần chốt tổng kết",
-                                   "TrainingPlanStage", stage.id, stage.plan.assignment.horse,
+                                   "TrainingPlan", stage.plan_id, stage.plan.assignment.horse,
                                    stage.end_date or stage.plan.end_date))
     if "OWNER_VIEW" in perms:  # Chủ ngựa
         items += owner_items(user, make_item, today)
@@ -90,7 +90,7 @@ def owner_items(user, make_item, today):
         reviewed[review.session.horse].append(review)
     for horse, reviews in reviewed.items():
         latest = max(r.review_date for r in reviews)
-        items.append(make_item("OWNER_SESSIONS_REVIEWED", f"{len(reviews)} buổi tập mới được trainer đánh giá",
+        items.append(make_item("OWNER_SESSIONS_REVIEWED", f"{len(reviews)} buổi tập mới được huấn luyện viên đánh giá",
                                "Horse", horse.id, horse, latest))
     stages = {st.id: st for st in TrainingPlanStage.objects.filter(
         plan__assignment__horse__owner=user, closed_at__date__gte=since).select_related("plan__assignment__horse")}

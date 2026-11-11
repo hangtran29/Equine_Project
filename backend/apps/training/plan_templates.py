@@ -25,9 +25,9 @@ DAILY_STRUCTURE = (
     "(vòng tròn hoặc đường thẳng, dây cương dài) để kích hoạt tuần hoàn.\n"
     "2. Bài tập chính 20–30 phút: theo giai đoạn (chạy bền, tập dưới nước, ô xuất phát, kiểm soát tốc độ...).\n"
     "3. Thả lỏng 10 phút: đi bộ chậm cho nhịp tim và thân nhiệt hạ dần.\n"
-    "4. Sau buổi tập: tắm sạch mồ hôi, kiểm tra móng sắt, chân và cơ; Rider ghi kết quả, Trainer đánh giá.\n"
+    "4. Sau buổi tập: tắm sạch mồ hôi, kiểm tra móng sắt, chân và cơ; Kỵ sĩ tập luyện ghi kết quả, Huấn luyện viên đánh giá.\n"
     "Dừng buổi tập ngay khi: đi lệch chân / què, chảy máu mũi, thở rít, nhịp tim không hạ sau thả lỏng, "
-    "ngựa hoảng loạn không kiểm soát được (báo cáo sức khỏe cho Vet)."
+    "ngựa hoảng loạn không kiểm soát được (báo cáo sức khỏe cho bác sĩ thú y)."
 )
 WEEKLY_PATTERN = (
     "Thứ 2: nhẹ (nước kiệu, đi bộ) · Thứ 3: bài chính (nặng) · Thứ 4: phục hồi (tập dưới nước / đi bộ) · "
@@ -35,11 +35,11 @@ WEEKLY_PATTERN = (
     "Chủ nhật: nghỉ. Tối đa 2 buổi nặng mỗi tuần, không xếp 2 buổi nặng liền nhau."
 )
 COMMON_NOTE = (
-    "Nghỉ ít nhất 1 ngày/tuần. Vet kiểm tra trước khi sang giai đoạn mới và trước ngày đua. Đóng / thay móng sắt "
+    "Nghỉ ít nhất 1 ngày/tuần. bác sĩ thú y kiểm tra trước khi sang giai đoạn mới và trước ngày đua. Đóng / thay móng sắt "
     "4–6 tuần/lần, kiểm tra răng 6–12 tháng/lần. Khẩu phần lập theo giai đoạn (Flow 4). Các con số là mức tham "
-    "khảo: trainer chỉnh theo phiếu đánh giá ngựa."
+    "khảo: huấn luyện viên chỉnh theo phiếu đánh giá ngựa."
 )
-VET_EXIT = "Vet xác nhận đủ sức khỏe thi đấu."
+VET_EXIT = "bác sĩ thú y xác nhận đủ sức khỏe thi đấu."
 
 # (thứ tự, tên, ngày bắt đầu, số ngày, cường độ, tải, quãng đường mục tiêu km, mặt sân, mục tiêu, nội dung, điều kiện sang giai đoạn sau)
 DEFAULT_TEMPLATES = {
@@ -107,7 +107,7 @@ DEFAULT_TEMPLATES = {
          "Hoàn thành buổi dốc không mệt quá mức; điểm phong độ trung bình ≥ 72."),
         (4, "Mô phỏng thi đấu", 64, 14, "Very High", 75, 160, "Địa hình hỗn hợp",
          "Quen nhịp độ và trạm kiểm tra của giải.",
-         "Mỗi tuần 1 buổi 40–60 km chia chặng; kiểm tra nhịp tim giữa chặng như trạm Vet (≤ 64 nhịp/phút).",
+         "Mỗi tuần 1 buổi 40–60 km chia chặng; kiểm tra nhịp tim giữa chặng như trạm thú y (≤ 64 nhịp/phút).",
          "Qua kiểm tra nhịp tim ở mọi chặng."),
         (5, "Giảm tải trước giải", 78, 7, "Low", 30, 40, "Đường mòn",
          "Tích trữ năng lượng trước ngày đua.", "Giảm quãng đường, giữ độ linh hoạt.", VET_EXIT),
@@ -119,7 +119,7 @@ DEFAULT_TEMPLATES = {
         (2, "Phát triển thể lực", 15, 28, "Moderate", 45, 80, "Địa hình đa dạng", "Tăng sức bền và sức mạnh.",
          "Tăng dần quãng đường; tập dưới nước 1 buổi/tuần.", "Điểm phong độ trung bình ≥ 70."),
         (3, "Duy trì & đánh giá lại", 43, 14, "Moderate", 40, 40, "Đường đua", "Giữ phong độ.",
-         "Duy trì tải; thử một số bài của các chuyên môn.", "Head Trainer đánh giá lại để chọn chuyên môn."),
+         "Duy trì tải; thử một số bài của các chuyên môn.", "Huấn luyện viên trưởng đánh giá lại để chọn chuyên môn."),
     ]),
 }
 
@@ -145,7 +145,7 @@ def _create_default(club, spec):
 
 
 def ensure_templates(club):
-    """Mỗi chuyên môn đang dùng có 1 giáo án mẫu trong CLB (thiếu thì tạo bản mặc định). {SpecializationID: mẫu}"""
+    """Mỗi chuyên môn đang dùng có 1 giáo án mẫu trong câu lạc bộ (thiếu thì tạo bản mặc định). {SpecializationID: mẫu}"""
     have = {t.specialization_id: t for t in TrainingPlanTemplate.objects.filter(club=club)}
     for spec in Specialization.objects.filter(status="Active"):
         if spec.id not in have:
@@ -175,7 +175,7 @@ def validate_template(values, stages):
 
 @transaction.atomic
 def update_template(template, user, values, stages):
-    """Head Trainer sửa giáo án mẫu: thông tin chung + thay toàn bộ giai đoạn. Giáo án đã tạo trước đó không đổi."""
+    """Huấn luyện viên trưởng sửa giáo án mẫu: thông tin chung + thay toàn bộ giai đoạn. Giáo án đã tạo trước đó không đổi."""
     merged = {"duration_days": values.get("duration_days", template.duration_days)}
     if stages is None:
         stages = list(template.stages.values("stage_order", "start_day", "duration_days"))
@@ -213,8 +213,8 @@ def draft_from_template(assignment, user, template):
         assignment=assignment, goal=template.goal, start_date=start, end_date=end,
         overall_intensity=template.overall_intensity, status=TrainingPlan.Status.DRAFT, created_at=timezone.now(),
         template=template,
-        note=(f"Tạo từ giáo án mẫu \"{template.template_name}\". Trainer xem phiếu đánh giá ngựa, "
-              "sửa cho phù hợp (hoặc giữ nguyên) rồi gửi Head Trainer duyệt.")[:2000])
+        note=(f"Tạo từ giáo án mẫu \"{template.template_name}\". Huấn luyện viên xem phiếu đánh giá ngựa, "
+              "sửa cho phù hợp (hoặc giữ nguyên) rồi gửi Huấn luyện viên trưởng duyệt.")[:2000])
     for stage in template.stages.all():
         first = start + timedelta(days=stage.start_day - 1)
         last = min(first + timedelta(days=stage.duration_days - 1), end)
@@ -227,12 +227,12 @@ def draft_from_template(assignment, user, template):
 
 
 def discard_untouched_template_drafts(assignment, user):
-    """Trainer tự soạn giáo án mới -> bản nháp từ mẫu chưa từng gửi duyệt của phân công đó bị hủy (không để 2 bản nháp)."""
+    """Huấn luyện viên tự soạn giáo án mới -> bản nháp từ mẫu chưa từng gửi duyệt của phân công đó bị hủy (không để 2 bản nháp)."""
     drafts = assignment.plans.filter(status=TrainingPlan.Status.DRAFT, template__isnull=False,
                                      submitted_at__isnull=True)
     ids = list(drafts.values_list("id", flat=True))
     if ids:
-        drafts.update(status=TrainingPlan.Status.CANCELLED, review_note="Trainer tự soạn giáo án khác thay bản mẫu")
+        drafts.update(status=TrainingPlan.Status.CANCELLED, review_note="Huấn luyện viên tự soạn giáo án khác thay bản mẫu")
         for plan_id in ids:
             log_action(user, "DISCARD_TEMPLATE_DRAFT", assignment.horse, {"TrainingPlanID": plan_id})
     return ids
@@ -317,7 +317,7 @@ def compare_with_template(plan):
 
 
 def template_review(plan):
-    """Thông tin để trainer sửa / Head Trainer duyệt: giáo án mẫu, phiếu đánh giá ngựa, các thay đổi so với mẫu."""
+    """Thông tin để huấn luyện viên sửa / Huấn luyện viên trưởng duyệt: giáo án mẫu, phiếu đánh giá ngựa, các thay đổi so với mẫu."""
     from .models import HorseAssessment
 
     template = plan.template
@@ -345,4 +345,4 @@ def template_review(plan):
 
 def ensure_template_editor(user):
     if not user.has_perm("TRAINING_PLAN_APPROVE"):
-        raise PermissionDenied("Chỉ Head Trainer sửa giáo án mẫu.")
+        raise PermissionDenied("Chỉ Huấn luyện viên trưởng mới chỉnh sửa được giáo án mẫu.")

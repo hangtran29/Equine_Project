@@ -4,7 +4,10 @@ from datetime import date
 
 from rest_framework import serializers
 
+from apps.core import validators
+
 from apps.core.serializers import DBColumnModelSerializer, fmt_datetime
+from apps.core.validators import ascii_code
 
 from .documents import content_type, is_upload
 from .models import Horse, HorseDocument, ProfileChangeRequest, RegistrationRequest, Stall
@@ -15,6 +18,8 @@ PROFILE_FIELDS = [
     "horse_name", "breed", "date_of_birth", "coat_color", "gender",
     "sire_name", "dam_name", "microchip_number", "passport_number",
 ]
+# Chủ ngựa tự khai về sức khỏe (không bắt buộc, không thuộc lý lịch nên không đi qua yêu cầu sửa hồ sơ)
+HEALTH_FIELDS = ["declared_health", "medical_history", "owner_note"]
 
 
 class OwnerBriefSerializer(serializers.Serializer):
@@ -42,8 +47,8 @@ class HorseSerializer(DBColumnModelSerializer):
     class Meta:
         model = Horse
         fields = [
-            "id", "club", "owner", *PROFILE_FIELDS, "horse_code", "verified_by", "verified_at",
-            "registration_status", "current_health_status", "archived_at", "archived_by", "archive_reason",
+            "id", "club", "owner", *PROFILE_FIELDS, *HEALTH_FIELDS, "horse_code", "verified_by", "verified_at",
+            "registration_status", "current_health_status", "archived_at", "archived_by", "archive_reason", "left_date",
             "created_at", "updated_at", "SexClass", "InitialExamSigned", "Owner", "CurrentStall",
         ]
         read_only_fields = fields
@@ -94,91 +99,91 @@ class HorseDetailSerializer(HorseSerializer):
         }
 
 
-MICROCHIP_RE = re.compile(r"^\d{15}$")
-PASSPORT_RE = re.compile(r"^[A-Z0-9][A-Z0-9/-]{4,49}$")
 OLDEST_HORSE_YEARS = 40
-TEXT_FIELDS = ["horse_name", "breed", "coat_color", "sire_name", "dam_name"]
+TEXT_FIELDS = ["horse_name", "sire_name", "dam_name"]
+_REQ = {"required": validators.MSG_REQUIRED, "null": validators.MSG_REQUIRED, "blank": validators.MSG_REQUIRED}
 
 
-def _required_text(label):
-    return {"required": True, "allow_null": False, "allow_blank": False,
-            "error_messages": {"required": f"Cần nhập {label}.", "blank": f"Cần nhập {label}.",
-                               "null": f"Cần nhập {label}."}}
+def _required_text(_label=None):
+    """Bắt buộc gửi; bỏ trống / chỉ khoảng trắng do bộ kiểm tra dùng chung báo bằng câu thống nhất."""
+    return {"required": True, "allow_null": False, "allow_blank": True, "trim_whitespace": False,
+            "error_messages": _REQ}
 
 
 class HorseWriteSerializer(DBColumnModelSerializer):
     """
     Tạo / sửa lý lịch ngựa. Body dùng tên cột: {"HorseName": ..., "MicrochipNumber": ...}.
-    Mọi trường lý lịch đều bắt buộc (không để trống / null). Sai ở đâu thì báo đúng trường đó:
-      MicrochipNumber  đúng 15 chữ số (chuẩn ISO 11784/11785), không trùng ngựa khác
-      PassportNumber   chữ in hoa, số, "-" hoặc "/", 5-50 ký tự, không trùng ngựa khác
-      DateOfBirth      không ở tương lai, không quá 40 năm
+    Mọi trường lý lịch đều bắt buộc. Sai ở đâu thì báo đúng trường đó (apps/core/validators.py):
+      MicrochipNumber  15 chữ số, 3 số đầu là mã quốc gia (704 = Việt Nam) hoặc mã nhà sản xuất 900–998
+      PassportNumber   số UELN 15 ký tự; gửi NoPassport = true khi ngựa chưa được cấp hộ chiếu
+      Breed, CoatColor chọn trong danh mục (apps/core/codes.py) hoặc tự nhập (có chữ cái, tối đa 100 / 50 ký tự)
+      DateOfBirth      không sau ngày hiện tại, không quá 40 năm
       SireName / DamName  khác tên ngựa và khác nhau
     """
 
+    NoPassport = serializers.BooleanField(required=False, write_only=True, default=False)
+
     class Meta:
         model = Horse
-        fields = PROFILE_FIELDS
+        fields = PROFILE_FIELDS + ["NoPassport"]
         extra_kwargs = {
-            "horse_name": _required_text("tên ngựa (HorseName)"),
-            "breed": _required_text("giống ngựa (Breed)"),
-            "coat_color": _required_text("màu lông (CoatColor)"),
-            "sire_name": _required_text("tên ngựa cha (SireName)"),
-            "dam_name": _required_text("tên ngựa mẹ (DamName)"),
-            "microchip_number": _required_text("số microchip (MicrochipNumber)"),
-            "passport_number": _required_text("số hộ chiếu / đăng ký (PassportNumber)"),
+            "horse_name": {**_required_text(), "max_length": None},
+            "breed": {"required": True, "allow_null": False, "allow_blank": True, "error_messages": _REQ},
+            "coat_color": {"required": True, "allow_null": False, "allow_blank": True, "error_messages": _REQ},
+            "sire_name": {**_required_text(), "max_length": None},
+            "dam_name": {**_required_text(), "max_length": None},
+            "microchip_number": {**_required_text(), "validators": []},   # bộ kiểm tra riêng báo lỗi theo loại
+            "passport_number": {"validators": [], "required": False, "allow_null": True, "allow_blank": True,
+                                "trim_whitespace": False, "error_messages": _REQ},
             "date_of_birth": {"required": True, "allow_null": False, "error_messages": {
-                "required": "Cần nhập ngày sinh (DateOfBirth).", "null": "Cần nhập ngày sinh (DateOfBirth).",
-                "invalid": "Ngày sinh phải theo dạng YYYY-MM-DD, vd 2021-03-12."}},
+                **_REQ, "invalid": "Ngày không đúng định dạng dd/mm/yyyy."}},
             "gender": {"required": True, "allow_null": False, "allow_blank": False, "error_messages": {
-                "required": "Cần chọn giới tính (Gender).", "null": "Cần chọn giới tính (Gender).",
-                "blank": "Cần chọn giới tính (Gender).",
-                "invalid_choice": "Giới tính phải là Male (đực), Female (cái) hoặc Gelding (đực đã thiến)."}},
+                "required": validators.MSG_SELECT, "null": validators.MSG_SELECT, "blank": validators.MSG_SELECT,
+                "invalid_choice": "Lựa chọn không có trong danh mục."}},
         }
 
-    def to_internal_value(self, data):
-        values = super().to_internal_value(data)
-        for attr in TEXT_FIELDS:
-            if attr in values:
-                values[attr] = values[attr].strip()
-        return values
+    def validate_horse_name(self, value):
+        return validators.clean_horse_name(value, "Tên ngựa")
+
+    def validate_sire_name(self, value):
+        return validators.clean_horse_name(value, "Tên ngựa bố")
+
+    def validate_dam_name(self, value):
+        return validators.clean_horse_name(value, "Tên ngựa mẹ")
+
+    def validate_breed(self, value):
+        # hồ sơ cũ có giống ngoài danh mục thì vẫn giữ được khi sửa các ô khác
+        if self.instance is not None and value == self.instance.breed:
+            return value
+        return validators.clean_breed(value)
+
+    def validate_coat_color(self, value):
+        if self.instance is not None and value == self.instance.coat_color:
+            return value
+        return validators.clean_coat_color(value)
 
     def validate_date_of_birth(self, value):
-        today = date.today()
-        if value > today:
-            raise serializers.ValidationError("Ngày sinh không được ở tương lai.")
-        if value < today.replace(year=today.year - OLDEST_HORSE_YEARS):
-            raise serializers.ValidationError(f"Ngày sinh không hợp lệ: ngựa không thể quá {OLDEST_HORSE_YEARS} tuổi.")
-        return value
+        return validators.clean_birth_date(value, OLDEST_HORSE_YEARS)
 
-    def _others(self):
-        others = Horse.objects.all()
-        if self.instance is not None:
-            others = others.exclude(pk=self.instance.pk)
-        return others
+    def _exclude_id(self):
+        return self.instance.pk if self.instance is not None else None
 
     def validate_microchip_number(self, value):
-        value = value.replace(" ", "").strip()
-        if not MICROCHIP_RE.match(value):
-            raise serializers.ValidationError(
-                "Số microchip phải gồm đúng 15 chữ số (chuẩn ISO 11784/11785; 3 số đầu là mã quốc gia "
-                "hoặc nhà sản xuất), vd 985141000123401."
-            )
-        if self._others().filter(microchip_number=value).exists():
-            raise serializers.ValidationError("Số microchip đã tồn tại ở một ngựa khác.")
-        return value
+        return validators.clean_microchip(value, exclude_horse_id=self._exclude_id())
 
     def validate_passport_number(self, value):
-        value = value.strip().upper()
-        if not PASSPORT_RE.match(value):
-            raise serializers.ValidationError(
-                "Số hộ chiếu / đăng ký chỉ gồm chữ, số, dấu '-' hoặc '/', dài 5-50 ký tự, vd VN-TB-2021-0142."
-            )
-        if self._others().filter(passport_number__iexact=value).exists():
-            raise serializers.ValidationError("Số hộ chiếu / đăng ký đã được dùng cho một ngựa khác.")
-        return value
+        if value in (None, ""):
+            return value
+        return validators.clean_ueln(value, exclude_horse_id=self._exclude_id())
 
     def validate(self, attrs):
+        no_passport = attrs.pop("NoPassport", False)
+        if no_passport:
+            attrs["passport_number"] = None
+        elif "passport_number" in attrs or self.instance is None:
+            if not attrs.get("passport_number"):
+                raise serializers.ValidationError({"PassportNumber": [validators.MSG_REQUIRED]})
+
         def current(attr):
             if attr in attrs:
                 return attrs[attr]
@@ -187,17 +192,35 @@ class HorseWriteSerializer(DBColumnModelSerializer):
         name, sire, dam = (current(a) or "" for a in ("horse_name", "sire_name", "dam_name"))
         errors = {}
         if sire and sire.casefold() == name.casefold():
-            errors["SireName"] = ["Tên ngựa cha không được trùng tên chính con ngựa này."]
+            errors["SireName"] = ["Tên ngựa bố không được trùng tên chính con ngựa này."]
         if dam and dam.casefold() == name.casefold():
             errors["DamName"] = ["Tên ngựa mẹ không được trùng tên chính con ngựa này."]
         if sire and dam and sire.casefold() == dam.casefold():
-            errors.setdefault("DamName", []).append("Tên ngựa cha và ngựa mẹ không được giống nhau.")
+            errors.setdefault("DamName", []).append("Tên ngựa bố và ngựa mẹ không được giống nhau.")
         if errors:
             raise serializers.ValidationError(errors)
         return attrs
 
 
-class HorseCreateSerializer(HorseWriteSerializer):
+class HorseDraftSerializer(HorseWriteSerializer):
+    """Tạo / sửa hồ sơ nháp: lý lịch + 3 ô sức khỏe chủ ngựa tự khai (để trống được)."""
+
+    class Meta(HorseWriteSerializer.Meta):
+        fields = HorseWriteSerializer.Meta.fields + HEALTH_FIELDS
+        extra_kwargs = {
+            **HorseWriteSerializer.Meta.extra_kwargs,
+            **{attr: {"required": False, "allow_null": True, "allow_blank": True} for attr in HEALTH_FIELDS},
+        }
+
+    def to_internal_value(self, data):
+        values = super().to_internal_value(data)
+        for attr in HEALTH_FIELDS:
+            if attr in values:
+                values[attr] = (values[attr] or "").strip() or None
+        return values
+
+
+class HorseCreateSerializer(HorseDraftSerializer):
     """
     Tạo hồ sơ (trạng thái Draft).
       - Owner tự đăng ký: gửi thêm ClubID (CLB muốn gửi ngựa vào). OwnerID = chính mình.
@@ -207,8 +230,8 @@ class HorseCreateSerializer(HorseWriteSerializer):
     ClubID = serializers.IntegerField(required=False, write_only=True)
     OwnerID = serializers.IntegerField(required=False, write_only=True)
 
-    class Meta(HorseWriteSerializer.Meta):
-        fields = HorseWriteSerializer.Meta.fields + ["ClubID", "OwnerID"]
+    class Meta(HorseDraftSerializer.Meta):
+        fields = HorseDraftSerializer.Meta.fields + ["ClubID", "OwnerID"]
 
 
 class HorseDocumentSerializer(DBColumnModelSerializer):
@@ -235,7 +258,7 @@ class HorseDocumentSerializer(DBColumnModelSerializer):
 
 
 class HorseDocumentUploadSerializer(serializers.Serializer):
-    """multipart/form-data: File, DocumentType, DocumentName (không bắt buộc), IsVisibleToOwner (Manager)."""
+    """multipart/form-data: File, DocumentType, DocumentName (không bắt buộc), IsVisibleToOwner (Quản lý câu lạc bộ)."""
 
     File = serializers.FileField(error_messages={"required": "Cần chọn file.", "empty": "File rỗng."})
     DocumentType = serializers.ChoiceField(choices=HorseDocument.DocumentType.choices, error_messages={
@@ -257,12 +280,15 @@ class StallSerializer(DBColumnModelSerializer):
 
     class Meta:
         model = Stall
-        fields = ["id", "club", "stall_number", "stall_type", "status", "CurrentHorse"]
+        fields = ["id", "club", "stall_number", "stall_type", "status", "maintenance_until", "CurrentHorse"]
         read_only_fields = fields
 
     def get_CurrentHorse(self, obj):
         assignment = obj.assignments.filter(status="Active").select_related("horse").first()
         if assignment is None:
+            return None
+        visible_horse_ids = self.context.get("visible_horse_ids")
+        if visible_horse_ids is not None and assignment.horse_id not in visible_horse_ids:
             return None
         return {"HorseID": assignment.horse_id, "HorseName": assignment.horse.horse_name,
                 "StartDate": assignment.start_date}
@@ -271,8 +297,8 @@ class StallSerializer(DBColumnModelSerializer):
 class StallWriteSerializer(DBColumnModelSerializer):
     class Meta:
         model = Stall
-        fields = ["stall_number", "stall_type", "status"]
-        extra_kwargs = {"status": {"required": False}}
+        fields = ["stall_number", "stall_type", "status", "maintenance_until"]
+        extra_kwargs = {"status": {"required": False}, "maintenance_until": {"required": False, "allow_null": True}}
 
     def validate_status(self, value):
         if value == Stall.Status.OCCUPIED:
@@ -337,8 +363,13 @@ class ReasonSerializer(serializers.Serializer):
     Reason = serializers.CharField(max_length=1000)
 
 
+class ArchiveSerializer(ReasonSerializer):
+    LeftDate = serializers.DateField(required=False, allow_null=True)   # ngày ngựa rời CLB, mặc định hôm nay
+
+
 class ApproveSerializer(serializers.Serializer):
-    HorseCode = serializers.CharField(max_length=30)
+    HorseCode = serializers.CharField(max_length=30, required=False, allow_blank=True,   # bỏ trống: tự đánh số EQ-xxx
+                                      validators=[ascii_code])
     StallID = serializers.IntegerField(required=False, allow_null=True)
     GroomID = serializers.IntegerField(required=False, allow_null=True)   # Groom phụ trách ngựa (Flow 4)
     ManagerNote = serializers.CharField(max_length=1000, required=False, allow_blank=True)

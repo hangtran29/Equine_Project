@@ -64,7 +64,7 @@ def submit(horse, user):
 
 
 def verify(horse, user):
-    """Club Manager đã đối chiếu giấy tờ, microchip -> chuyển sang chờ Vet trực khám."""
+    """Quản lý câu lạc bộ đã đối chiếu giấy tờ, microchip -> chuyển sang chờ bác sĩ thú y trực khám."""
     _require_status(horse, (S.SUBMITTED,), "xác minh hồ sơ")
     request = latest_request(horse)
     now = timezone.now()
@@ -98,7 +98,17 @@ def reject(horse, user, reason):
     return horse
 
 
-def approve(horse, user, horse_code, stall_id=None, manager_note=None, groom_id=None):
+def auto_horse_code(horse):
+    """Mã ngựa tự đánh theo số hồ sơ: EQ-004; trùng (mã nhập tay trước đây) thì thêm hậu tố EQ-004-2."""
+    base = f"EQ-{horse.pk:03d}"
+    code, n = base, 1
+    while Horse.objects.filter(club_id=horse.club_id, horse_code__iexact=code).exclude(pk=horse.pk).exists():
+        n += 1
+        code = f"{base}-{n}"
+    return code
+
+
+def approve(horse, user, horse_code=None, stall_id=None, manager_note=None, groom_id=None):
     """
     Hoàn tất tiếp nhận: cần phiếu khám đầu vào đã chốt và đạt; gán mã ngựa, xếp chuồng (nếu có)
     và xếp Groom phụ trách (nếu có, cần Flow 4).
@@ -113,14 +123,14 @@ def approve(horse, user, horse_code, stall_id=None, manager_note=None, groom_id=
             "Hãy từ chối hồ sơ.",
             "INITIAL_EXAM_FAILED",
         )
-    horse_code = horse_code.strip()
+    horse_code = (horse_code or "").strip() or auto_horse_code(horse)
     if Horse.objects.filter(club_id=horse.club_id, horse_code__iexact=horse_code).exclude(pk=horse.pk).exists():
         raise BusinessRuleError("Mã ngựa đã tồn tại trong câu lạc bộ.", "DUPLICATE_HORSE_CODE")
 
     groom = None
     if groom_id:
         if not flows.has_care():
-            raise ValidationError({"GroomID": ["Chưa có Flow 4 (chăm sóc) nên chưa xếp Groom được."]})
+            raise ValidationError({"GroomID": ["Chưa có phân hệ chăm sóc nên chưa xếp người chăm sóc ngựa được."]})
         groom = require_club_user(groom_id, horse.club_id, "GROOM", field="GroomID")
 
     now = timezone.now()
@@ -162,7 +172,7 @@ def approve(horse, user, horse_code, stall_id=None, manager_note=None, groom_id=
     return horse
 
 
-def archive(horse, user, reason):
+def archive(horse, user, reason, left_date=None):
     """
     Ngựa rời CLB: lưu trữ hồ sơ và trả chuồng; có Flow 2 thì kết thúc phân công trainer
     (hủy giáo án / buổi tập chưa diễn ra); có Flow 4 thì bỏ các việc chăm sóc chưa làm
@@ -181,22 +191,24 @@ def archive(horse, user, reason):
 
         trainer_assignment = active_assignment(horse)
         if trainer_assignment is not None:
-            end_assignment(trainer_assignment, user, "Ngựa rời CLB")
+            end_assignment(trainer_assignment, user, "Ngựa rời câu lạc bộ")
     if flows.has_care():
         from apps.care.models import CareTask, DietPlan
 
         for task in CareTask.objects.filter(horse=horse, status=CareTask.Status.PENDING):
             task.status = CareTask.Status.SKIPPED
-            task.note = ((task.note or "") + "\n[Bỏ qua] Ngựa đã rời CLB").strip()[:1000]
+            task.note = ((task.note or "") + "\n[Bỏ qua] Ngựa đã rời câu lạc bộ").strip()[:1000]
             task.save(update_fields=["status", "note"])
         DietPlan.objects.filter(horse=horse, status__in=("Pending", "Approved", "Adjusted")).update(status="Expired")
     horse.registration_status = S.ARCHIVED
     horse.archived_at = now
     horse.archived_by = user
     horse.archive_reason = reason
+    horse.left_date = left_date or now.date()
     horse.touch()
-    horse.save(update_fields=["registration_status", "archived_at", "archived_by", "archive_reason", "updated_at"])
-    log_action(user, "ARCHIVE_HORSE", horse, {"Reason": reason})
+    horse.save(update_fields=["registration_status", "archived_at", "archived_by", "archive_reason", "left_date",
+                              "updated_at"])
+    log_action(user, "ARCHIVE_HORSE", horse, {"Reason": reason, "LeftDate": str(horse.left_date)})
     return horse
 
 
@@ -221,6 +233,8 @@ def save_stall(user, values, stall=None, club_id=None):
         raise BusinessRuleError("Số chuồng đã tồn tại trong câu lạc bộ.", "DUPLICATE_STALL")
     if values.get("status") and stall.pk and stall.assignments.filter(status="Active").exists():
         raise BusinessRuleError("Chuồng đang có ngựa, chuyển ngựa đi trước khi đổi trạng thái.", "STALL_OCCUPIED")
+    if values.get("status") and values["status"] != Stall.Status.MAINTENANCE:
+        values = {**values, "maintenance_until": None}   # hết bảo trì thì bỏ ngày dự kiến
     for attr, value in values.items():
         setattr(stall, attr, value)
     created = stall.pk is None
@@ -250,3 +264,66 @@ def move_stall(horse, user, stall_id):
     stall.save(update_fields=["status"])
     log_action(user, "MOVE_STALL", horse, {"FromStallIDs": old_ids, "ToStallID": stall.id})
     return horse
+
+
+def _owner_input(data):
+    """Kiểm tra OwnerFullName, OwnerEmail, OwnerPhone, OwnerAddress. Trả (tài khoản có sẵn | None, giá trị, lỗi)."""
+    from rest_framework.exceptions import ValidationError
+
+    from apps.accounts.models import User
+    from apps.core import validators
+
+    errors, values = {}, {}
+
+    def check(key, fn):
+        try:
+            values[key] = fn(data.get(key))
+        except ValidationError as exc:
+            detail = exc.detail
+            errors[key] = detail if isinstance(detail, list) else [detail]
+
+    check("OwnerEmail", lambda v: validators.clean_email(v, check_unique=False))
+    existing = None
+    if "OwnerEmail" in values:
+        existing = User.objects.filter(email__iexact=values["OwnerEmail"]).prefetch_related("roles").first()
+    if existing is not None:
+        if "HORSE_OWNER" not in existing.role_codes:
+            errors["OwnerEmail"] = ["Email này thuộc tài khoản nhân sự, không dùng làm chủ sở hữu ngựa."]
+        return existing, values, errors
+    check("OwnerFullName", validators.clean_full_name)
+    check("OwnerPhone", validators.clean_phone_number)
+    check("OwnerAddress", validators.clean_address)
+    return None, values, errors
+
+
+def owner_input_errors(data):
+    return _owner_input(data)[2]
+
+
+def owner_from_manager_input(manager, data):
+    """
+    Quản lý khai giúp hồ sơ (QL10): OwnerFullName, OwnerEmail, OwnerPhone, OwnerAddress.
+    - Email đã có tài khoản chủ ngựa: gắn hồ sơ vào tài khoản đó (Created = False).
+    - Chưa có: tạo tài khoản chủ ngựa trong câu lạc bộ, mật khẩu tạm, bắt đổi ở lần đăng nhập đầu.
+    Trả (owner, {"Created", "Email", "FullName", "TemporaryPassword"?}).
+    """
+    import secrets
+
+    from rest_framework.exceptions import ValidationError
+
+    from apps.accounts.models import Role, User, UserRole
+    from apps.core import emails
+
+    existing, v, errors = _owner_input(data)
+    if errors:
+        raise ValidationError(errors)
+    if existing is not None:
+        return existing, {"Created": False, "Email": existing.email, "FullName": existing.full_name}
+    temporary = secrets.token_urlsafe(9)
+    owner = User.objects.create_user(email=v["OwnerEmail"], password=temporary, full_name=v["OwnerFullName"],
+                                     phone=v["OwnerPhone"], address=v["OwnerAddress"], club_id=manager.club_id,
+                                     must_change_password=True)
+    UserRole.objects.create(user=owner, role=Role.objects.get(code="HORSE_OWNER"), assigned_by=manager)
+    log_action(manager, "CREATE_USER", owner, {"RoleCode": "HORSE_OWNER", "From": "HorseIntake"})
+    emails.account_created_by_manager(owner, manager)
+    return owner, {"Created": True, "Email": owner.email, "FullName": owner.full_name, "TemporaryPassword": temporary}
